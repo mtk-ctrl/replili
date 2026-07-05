@@ -26,6 +26,16 @@ const RAMP_LENGTH = CELL_SIZE;
 
 let windowTexture: Texture | null = null;
 let crosswalkTexture: Texture | null = null;
+let fenceTexture: Texture | null = null;
+
+const HOUSE_COLORS = [
+  new Color3(0.62, 0.8, 0.9),
+  new Color3(0.96, 0.85, 0.6),
+  new Color3(0.94, 0.68, 0.68),
+  new Color3(0.68, 0.88, 0.75),
+  new Color3(0.9, 0.78, 0.55),
+  new Color3(0.85, 0.75, 0.9),
+];
 
 export function generateCity(scene: Scene): void {
   createGround(scene);
@@ -38,6 +48,7 @@ export function generateCity(scene: Scene): void {
   createElevatedHighway(scene);
   createFlags(scene);
   createSpawnMarkers(scene);
+  createBoundaryFence(scene);
 }
 
 function getWindowTexture(scene: Scene): Texture {
@@ -100,6 +111,84 @@ function getCrosswalkTexture(scene: Scene): Texture {
   texture.update();
   crosswalkTexture = texture;
   return texture;
+}
+
+function getFenceTexture(scene: Scene): Texture {
+  if (fenceTexture) return fenceTexture;
+
+  const size = 128;
+  const texture = new DynamicTexture('fenceTex', { width: size, height: size }, scene, false);
+  const ctx = texture.getContext() as CanvasRenderingContext2D;
+  ctx.strokeStyle = 'rgba(180, 185, 190, 0.9)';
+  ctx.lineWidth = 2;
+  const step = 16;
+  for (let i = -size; i < size * 2; i += step) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + size, size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(i, size);
+    ctx.lineTo(i + size, 0);
+    ctx.stroke();
+  }
+  texture.update();
+  texture.hasAlpha = true;
+  texture.wrapU = Texture.WRAP_ADDRESSMODE;
+  texture.wrapV = Texture.WRAP_ADDRESSMODE;
+  texture.uScale = WORLD_SIZE / 6;
+  texture.vScale = 2;
+  fenceTexture = texture;
+  return texture;
+}
+
+function createBoundaryFence(scene: Scene): void {
+  const fenceHeight = 6;
+  const half = WORLD_SIZE / 2 - 1.5;
+
+  const fenceMat = new PBRMaterial('fenceMat', scene);
+  fenceMat.albedoTexture = getFenceTexture(scene);
+  fenceMat.useAlphaFromAlbedoTexture = true;
+  fenceMat.backFaceCulling = false;
+  fenceMat.albedoColor = new Color3(0.75, 0.78, 0.8);
+  fenceMat.roughness = 0.6;
+  fenceMat.metallic = 0.3;
+
+  const postMat = new PBRMaterial('fencePostMat', scene);
+  postMat.albedoColor = new Color3(0.3, 0.3, 0.32);
+  postMat.roughness = 0.6;
+  postMat.metallic = 0.4;
+
+  const sides: Array<[number, number, number, number]> = [
+    [WORLD_SIZE - 3, fenceHeight, 0, -half],
+    [WORLD_SIZE - 3, fenceHeight, 0, half],
+    [fenceHeight, WORLD_SIZE - 3, -half, 0],
+    [fenceHeight, WORLD_SIZE - 3, half, 0],
+  ];
+
+  sides.forEach(([w, d, ox, oz], i) => {
+    const isVertical = ox !== 0;
+    const panel = MeshBuilder.CreatePlane(
+      `fence_${i}`,
+      { width: isVertical ? d : w, height: fenceHeight },
+      scene,
+    );
+    panel.position = new Vector3(ox, fenceHeight / 2, oz);
+    if (isVertical) panel.rotation.y = Math.PI / 2;
+    panel.material = fenceMat;
+    panel.checkCollisions = true;
+
+    const postCount = Math.round((isVertical ? d : w) / 12);
+    for (let p = 0; p <= postCount; p += 1) {
+      const t = p / postCount - 0.5;
+      const post = MeshBuilder.CreateCylinder(`fence_post_${i}_${p}`, { diameter: 0.25, height: fenceHeight }, scene);
+      post.position = isVertical
+        ? new Vector3(ox, fenceHeight / 2, oz + t * d)
+        : new Vector3(ox + t * w, fenceHeight / 2, oz);
+      post.material = postMat;
+      post.checkCollisions = true;
+    }
+  });
 }
 
 function createGround(scene: Scene): void {
@@ -310,13 +399,18 @@ function createBuildings(scene: Scene): void {
           const occupyChance = isDowntown ? 0.9 : 0.6;
           if (Math.random() > occupyChance) return;
 
-          const height = isDowntown ? rand(14, 30) : rand(4, 10);
+          const height = isDowntown ? rand(8, 16) : rand(3.5, 6);
           const footprint = subSize * rand(0.55, 0.8);
           const lotId = `${x}_${z}_${lotXi}_${lotZi}`;
           const position = new Vector3(cellCenterX + ox, 0, cellCenterZ + oz);
 
-          const v = isDowntown ? rand(0.5, 0.7) : rand(0.6, 0.85);
-          createHollowBuilding(scene, lotId, position, footprint, height, new Color3(v, v, v * 1.05), winTex);
+          if (isDowntown) {
+            const v = rand(0.5, 0.7);
+            createHollowBuilding(scene, lotId, position, footprint, height, new Color3(v, v, v * 1.05), winTex, true);
+          } else {
+            const color = HOUSE_COLORS[Math.floor(Math.random() * HOUSE_COLORS.length)];
+            createHollowBuilding(scene, lotId, position, footprint, height, color, null, false);
+          }
         });
       });
     }
@@ -330,20 +424,17 @@ function createHollowBuilding(
   footprint: number,
   height: number,
   color: Color3,
-  winTex: Texture,
+  winTex: Texture | null,
+  isDowntown: boolean,
 ): void {
   const wallThickness = 0.3;
   const half = footprint / 2;
 
   const wallMat = new PBRMaterial(`buildingMat_${id}`, scene);
-  wallMat.albedoTexture = winTex;
+  if (winTex) wallMat.albedoTexture = winTex;
   wallMat.albedoColor = color;
   wallMat.roughness = 0.6;
   wallMat.metallic = 0.1;
-
-  const roofMat = new PBRMaterial(`roofMat_${id}`, scene);
-  roofMat.albedoColor = new Color3(0.3, 0.3, 0.32);
-  roofMat.roughness = 0.9;
 
   const canHaveDoor = footprint >= 4;
   const doorWidth = Math.min(2.2, footprint * 0.4);
@@ -368,14 +459,38 @@ function createHollowBuilding(
   addWall(`${id}_wallE`, wallThickness, footprint, half - wallThickness / 2, 0);
   addWall(`${id}_wallW`, wallThickness, footprint, -half + wallThickness / 2, 0);
 
-  const roof = MeshBuilder.CreateBox(`${id}_roof`, { width: footprint, height: wallThickness, depth: footprint }, scene);
-  roof.position = new Vector3(position.x, height, position.z);
-  roof.material = roofMat;
-  roof.checkCollisions = true;
-  roof.receiveShadows = true;
+  const walkableRoof = isDowntown && height > 8;
 
-  if (canHaveDoor && height > 8) {
-    createSpiralStaircase(scene, id, position, footprint, height, wallThickness);
+  if (walkableRoof) {
+    const roofMat = new PBRMaterial(`roofMat_${id}`, scene);
+    roofMat.albedoColor = new Color3(0.3, 0.3, 0.32);
+    roofMat.roughness = 0.9;
+
+    const roof = MeshBuilder.CreateBox(`${id}_roof`, { width: footprint, height: wallThickness, depth: footprint }, scene);
+    roof.position = new Vector3(position.x, height, position.z);
+    roof.material = roofMat;
+    roof.checkCollisions = true;
+    roof.receiveShadows = true;
+
+    if (canHaveDoor) {
+      createSpiralStaircase(scene, id, position, footprint, height, wallThickness);
+    }
+  } else {
+    const pitchMat = new PBRMaterial(`pitchMat_${id}`, scene);
+    pitchMat.albedoColor = new Color3(0.5, 0.32, 0.28);
+    pitchMat.roughness = 0.85;
+
+    const roofHeight = footprint * 0.4;
+    const roof = MeshBuilder.CreateCylinder(
+      `${id}_roof`,
+      { diameterTop: 0, diameterBottom: footprint * 1.2, height: roofHeight, tessellation: 4 },
+      scene,
+    );
+    roof.position = new Vector3(position.x, height + roofHeight / 2, position.z);
+    roof.rotation.y = Math.PI / 4;
+    roof.material = pitchMat;
+    roof.checkCollisions = true;
+    roof.receiveShadows = true;
   }
 }
 
