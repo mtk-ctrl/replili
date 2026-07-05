@@ -86,6 +86,7 @@ function createGround(scene: Scene): void {
   mat.metallic = 0;
   ground.material = mat;
   ground.receiveShadows = true;
+  ground.checkCollisions = true;
 }
 
 function createRoadGrid(scene: Scene): void {
@@ -159,6 +160,7 @@ function createBuildings(scene: Scene): void {
           const building = MeshBuilder.CreateBox(`building_${lotId}`, { width: footprint, height, depth: footprint }, scene);
           building.position = new Vector3(cellCenterX + ox, height / 2, cellCenterZ + oz);
           building.receiveShadows = true;
+          building.checkCollisions = true;
 
           const mat = new PBRMaterial(`buildingMat_${lotId}`, scene);
           mat.albedoTexture = winTex;
@@ -220,17 +222,20 @@ function createElevatedHighway(scene: Scene): void {
   southRamp.rotation.x = -Math.atan2(ELEVATED_HEIGHT, RAMP_LENGTH);
   southRamp.material = deckMat;
   southRamp.receiveShadows = true;
+  southRamp.checkCollisions = true;
 
   const deck = MeshBuilder.CreateBox('highway_deck', { width: ROAD_WIDTH, height: 0.4, depth: flatLength }, scene);
   deck.position = new Vector3(0, ELEVATED_HEIGHT, 0);
   deck.material = deckMat;
   deck.receiveShadows = true;
+  deck.checkCollisions = true;
 
   const northRamp = MeshBuilder.CreateBox('highway_ramp_north', { width: ROAD_WIDTH, height: 0.4, depth: slopeLength }, scene);
   northRamp.position = new Vector3(0, ELEVATED_HEIGHT / 2, half - RAMP_LENGTH / 2);
   northRamp.rotation.x = Math.atan2(ELEVATED_HEIGHT, RAMP_LENGTH);
   northRamp.material = deckMat;
   northRamp.receiveShadows = true;
+  northRamp.checkCollisions = true;
 
   const origin = -TOTAL_SIZE / 2;
   for (let i = 0; i <= GRID_SIZE; i++) {
@@ -241,6 +246,7 @@ function createElevatedHighway(scene: Scene): void {
     pillar.position = new Vector3(0, ELEVATED_HEIGHT / 2, z);
     pillar.material = pillarMat;
     pillar.receiveShadows = true;
+    pillar.checkCollisions = true;
   }
 }
 
@@ -295,6 +301,13 @@ function createSpawnMarkers(scene: Scene): void {
   matB.albedoColor = new Color3(1, 0.3, 0.2);
   matB.roughness = 0.7;
   spawnB.material = matB;
+}
+
+export function getSpawnPosition(team: 'A' | 'B'): Vector3 {
+  const half = TOTAL_SIZE / 2;
+  return team === 'A'
+    ? new Vector3(-half + BLOCK_SIZE / 2, 0, -half + BLOCK_SIZE / 2)
+    : new Vector3(half - BLOCK_SIZE / 2, 0, half - BLOCK_SIZE / 2);
 }
 
 function rand(min: number, max: number): number {

@@ -1,5 +1,6 @@
 import { Engine, Scene, ArcRotateCamera, HemisphericLight, DirectionalLight, Vector3, Color3, Color4, ShadowGenerator, Mesh } from '@babylonjs/core';
-import { generateCity } from './map/generateCity';
+import { generateCity, getSpawnPosition } from './map/generateCity';
+import { createPlayer } from './player/PlayerController';
 
 const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
 const engine = new Engine(canvas, true);
@@ -11,7 +12,7 @@ scene.fogStart = 160;
 scene.fogEnd = 340;
 
 const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3.2, 140, Vector3.Zero(), scene);
-camera.lowerRadiusLimit = 20;
+camera.lowerRadiusLimit = 3;
 camera.upperRadiusLimit = 240;
 camera.attachControl(canvas, true);
 
@@ -22,7 +23,9 @@ const sun = new DirectionalLight('sun', new Vector3(-0.5, -1, -0.3), scene);
 sun.intensity = 1.1;
 sun.position = new Vector3(200, 200, 200);
 
+scene.collisionsEnabled = true;
 generateCity(scene);
+createPlayer(scene, camera, getSpawnPosition('A'));
 
 const shadowGenerator = new ShadowGenerator(2048, sun);
 shadowGenerator.usePercentageCloserFiltering = true;
