@@ -13,6 +13,7 @@ const GRID_SIZE = 6;
 const BLOCK_SIZE = 18;
 const ROAD_WIDTH = 6;
 const ALLEY_WIDTH = 2.5;
+const SIDEWALK_WIDTH = 1.8;
 const CELL_SIZE = BLOCK_SIZE + ROAD_WIDTH;
 const TOTAL_SIZE = CELL_SIZE * GRID_SIZE;
 
@@ -24,11 +25,15 @@ const ELEVATED_HEIGHT = 9;
 const RAMP_LENGTH = CELL_SIZE;
 
 let windowTexture: Texture | null = null;
+let crosswalkTexture: Texture | null = null;
 
 export function generateCity(scene: Scene): void {
   createGround(scene);
   createRoadGrid(scene);
+  createSidewalks(scene);
+  createIntersectionProps(scene);
   createBuildings(scene);
+  createTrees(scene);
   createRingRoad(scene);
   createElevatedHighway(scene);
   createFlags(scene);
@@ -78,6 +83,25 @@ function getGrassTexture(scene: Scene): Texture {
   return texture;
 }
 
+function getCrosswalkTexture(scene: Scene): Texture {
+  if (crosswalkTexture) return crosswalkTexture;
+
+  const size = 128;
+  const texture = new DynamicTexture('crosswalkTex', { width: size, height: size }, scene, false);
+  const ctx = texture.getContext() as CanvasRenderingContext2D;
+  ctx.fillStyle = '#242427';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#e8e8e0';
+  const stripes = 5;
+  const stripeWidth = size / (stripes * 2);
+  for (let i = 0; i < stripes; i++) {
+    ctx.fillRect(i * stripeWidth * 2, 0, stripeWidth, size);
+  }
+  texture.update();
+  crosswalkTexture = texture;
+  return texture;
+}
+
 function createGround(scene: Scene): void {
   const ground = MeshBuilder.CreateGround('ground', { width: WORLD_SIZE, height: WORLD_SIZE }, scene);
   const mat = new PBRMaterial('groundMat', scene);
@@ -95,11 +119,6 @@ function createRoadGrid(scene: Scene): void {
   roadMat.roughness = 0.85;
   roadMat.metallic = 0.05;
 
-  const alleyMat = new PBRMaterial('alleyMat', scene);
-  alleyMat.albedoColor = new Color3(0.4, 0.39, 0.37);
-  alleyMat.roughness = 0.9;
-  alleyMat.metallic = 0;
-
   const origin = -TOTAL_SIZE / 2;
 
   for (let i = 0; i <= GRID_SIZE; i++) {
@@ -115,21 +134,159 @@ function createRoadGrid(scene: Scene): void {
     horizontal.material = roadMat;
     horizontal.receiveShadows = true;
   }
+}
+
+function createSidewalks(scene: Scene): void {
+  const sidewalkMat = new PBRMaterial('sidewalkMat', scene);
+  sidewalkMat.albedoColor = new Color3(0.72, 0.71, 0.68);
+  sidewalkMat.roughness = 0.9;
+  sidewalkMat.metallic = 0;
+
+  const origin = -TOTAL_SIZE / 2;
 
   for (let x = 0; x < GRID_SIZE; x++) {
     for (let z = 0; z < GRID_SIZE; z++) {
       const cellCenterX = origin + ROAD_WIDTH + x * CELL_SIZE + BLOCK_SIZE / 2;
       const cellCenterZ = origin + ROAD_WIDTH + z * CELL_SIZE + BLOCK_SIZE / 2;
+      const half = BLOCK_SIZE / 2;
 
-      const alleyH = MeshBuilder.CreateBox(`alley_h_${x}_${z}`, { width: BLOCK_SIZE, height: 0.08, depth: ALLEY_WIDTH }, scene);
-      alleyH.position = new Vector3(cellCenterX, 0.04, cellCenterZ);
-      alleyH.material = alleyMat;
-      alleyH.receiveShadows = true;
+      const edges: Array<[number, number, number, number]> = [
+        [BLOCK_SIZE, SIDEWALK_WIDTH, 0, -half + SIDEWALK_WIDTH / 2],
+        [BLOCK_SIZE, SIDEWALK_WIDTH, 0, half - SIDEWALK_WIDTH / 2],
+        [SIDEWALK_WIDTH, BLOCK_SIZE, -half + SIDEWALK_WIDTH / 2, 0],
+        [SIDEWALK_WIDTH, BLOCK_SIZE, half - SIDEWALK_WIDTH / 2, 0],
+      ];
 
-      const alleyV = MeshBuilder.CreateBox(`alley_v_${x}_${z}`, { width: ALLEY_WIDTH, height: 0.08, depth: BLOCK_SIZE }, scene);
-      alleyV.position = new Vector3(cellCenterX, 0.04, cellCenterZ);
-      alleyV.material = alleyMat;
-      alleyV.receiveShadows = true;
+      edges.forEach(([w, d, ox, oz], i) => {
+        const strip = MeshBuilder.CreateBox(`sidewalk_${x}_${z}_${i}`, { width: w, height: 0.12, depth: d }, scene);
+        strip.position = new Vector3(cellCenterX + ox, 0.06, cellCenterZ + oz);
+        strip.material = sidewalkMat;
+        strip.receiveShadows = true;
+        strip.checkCollisions = true;
+      });
+    }
+  }
+}
+
+function createIntersectionProps(scene: Scene): void {
+  const poleMat = new PBRMaterial('poleMat', scene);
+  poleMat.albedoColor = new Color3(0.25, 0.25, 0.27);
+  poleMat.roughness = 0.6;
+  poleMat.metallic = 0.4;
+
+  const lampMat = new PBRMaterial('lampMat', scene);
+  lampMat.albedoColor = new Color3(1, 0.95, 0.7);
+  lampMat.emissiveColor = new Color3(0.9, 0.85, 0.5);
+  lampMat.roughness = 0.5;
+
+  const redMat = new PBRMaterial('trafficRedMat', scene);
+  redMat.albedoColor = new Color3(1, 0.2, 0.15);
+  redMat.emissiveColor = new Color3(0.6, 0.05, 0.05);
+
+  const greenMat = new PBRMaterial('trafficGreenMat', scene);
+  greenMat.albedoColor = new Color3(0.2, 0.9, 0.3);
+  greenMat.emissiveColor = new Color3(0.05, 0.4, 0.1);
+
+  const boxMat = new PBRMaterial('trafficBoxMat', scene);
+  boxMat.albedoColor = new Color3(0.15, 0.15, 0.15);
+  boxMat.roughness = 0.6;
+
+  const crosswalkMat = new PBRMaterial('crosswalkMat', scene);
+  crosswalkMat.albedoTexture = getCrosswalkTexture(scene);
+  crosswalkMat.roughness = 0.9;
+
+  const origin = -TOTAL_SIZE / 2;
+  const cornerOffset = ROAD_WIDTH / 2 + SIDEWALK_WIDTH / 2;
+
+  for (let i = 0; i <= GRID_SIZE; i++) {
+    for (let j = 0; j <= GRID_SIZE; j++) {
+      const x = origin + i * CELL_SIZE;
+      const z = origin + j * CELL_SIZE;
+
+      const lampPole = MeshBuilder.CreateCylinder(`lamp_pole_${i}_${j}`, { diameter: 0.25, height: 5 }, scene);
+      lampPole.position = new Vector3(x + cornerOffset, 2.5, z + cornerOffset);
+      lampPole.material = poleMat;
+      lampPole.receiveShadows = true;
+
+      const lampHead = MeshBuilder.CreateSphere(`lamp_head_${i}_${j}`, { diameter: 0.6 }, scene);
+      lampHead.position = new Vector3(x + cornerOffset, 5, z + cornerOffset);
+      lampHead.material = lampMat;
+
+      if (i < GRID_SIZE && j < GRID_SIZE) {
+        const signalPole = MeshBuilder.CreateCylinder(`signal_pole_${i}_${j}`, { diameter: 0.25, height: 4.5 }, scene);
+        signalPole.position = new Vector3(x - cornerOffset, 2.25, z - cornerOffset);
+        signalPole.material = poleMat;
+        signalPole.receiveShadows = true;
+
+        const signalBox = MeshBuilder.CreateBox(`signal_box_${i}_${j}`, { width: 0.5, height: 1.2, depth: 0.4 }, scene);
+        signalBox.position = new Vector3(x - cornerOffset, 4.3, z - cornerOffset);
+        signalBox.material = boxMat;
+
+        const redLight = MeshBuilder.CreateSphere(`signal_red_${i}_${j}`, { diameter: 0.25 }, scene);
+        redLight.position = new Vector3(x - cornerOffset, 4.6, z - cornerOffset - 0.21);
+        redLight.material = redMat;
+
+        const greenLight = MeshBuilder.CreateSphere(`signal_green_${i}_${j}`, { diameter: 0.25 }, scene);
+        greenLight.position = new Vector3(x - cornerOffset, 4.0, z - cornerOffset - 0.21);
+        greenLight.material = greenMat;
+
+        const approaches: Array<[number, number, number]> = [
+          [ROAD_WIDTH, 2.5, 0],
+          [ROAD_WIDTH, -2.5, 0],
+          [2.5, 0, ROAD_WIDTH],
+          [-2.5, 0, ROAD_WIDTH],
+        ];
+        approaches.forEach(([ox, oz, rotFlag], k) => {
+          const isVertical = rotFlag !== 0;
+          const crosswalk = MeshBuilder.CreateGround(
+            `crosswalk_${i}_${j}_${k}`,
+            { width: isVertical ? ROAD_WIDTH : 2.4, height: isVertical ? 2.4 : ROAD_WIDTH },
+            scene,
+          );
+          crosswalk.position = new Vector3(x + ox, 0.07, z + oz);
+          crosswalk.material = crosswalkMat;
+        });
+      }
+    }
+  }
+}
+
+function createTrees(scene: Scene): void {
+  const trunkMat = new PBRMaterial('trunkMat', scene);
+  trunkMat.albedoColor = new Color3(0.35, 0.25, 0.15);
+  trunkMat.roughness = 0.9;
+
+  const foliageMat = new PBRMaterial('foliageMat', scene);
+  foliageMat.albedoColor = new Color3(0.2, 0.45, 0.2);
+  foliageMat.roughness = 0.9;
+
+  const origin = -TOTAL_SIZE / 2;
+  const center = (GRID_SIZE - 1) / 2;
+  let treeId = 0;
+
+  for (let x = 0; x < GRID_SIZE; x++) {
+    for (let z = 0; z < GRID_SIZE; z++) {
+      const distanceFromCenter = Math.max(Math.abs(x - center), Math.abs(z - center));
+      const isDowntown = distanceFromCenter <= 1;
+      const cellCenterX = origin + ROAD_WIDTH + x * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterZ = origin + ROAD_WIDTH + z * CELL_SIZE + BLOCK_SIZE / 2;
+      const treeCount = isDowntown ? 1 : Math.floor(rand(1, 4));
+
+      for (let t = 0; t < treeCount; t++) {
+        const ox = rand(-BLOCK_SIZE / 2 + 1.5, BLOCK_SIZE / 2 - 1.5);
+        const oz = rand(-BLOCK_SIZE / 2 + 1.5, BLOCK_SIZE / 2 - 1.5);
+
+        treeId += 1;
+        const trunk = MeshBuilder.CreateCylinder(`tree_trunk_${treeId}`, { diameter: 0.35, height: 2.2 }, scene);
+        trunk.position = new Vector3(cellCenterX + ox, 1.1, cellCenterZ + oz);
+        trunk.material = trunkMat;
+        trunk.receiveShadows = true;
+
+        const foliage = MeshBuilder.CreateSphere(`tree_foliage_${treeId}`, { diameter: rand(2.2, 3.2), segments: 6 }, scene);
+        foliage.position = new Vector3(cellCenterX + ox, 2.8, cellCenterZ + oz);
+        foliage.material = foliageMat;
+        foliage.receiveShadows = true;
+      }
     }
   }
 }
@@ -155,23 +312,115 @@ function createBuildings(scene: Scene): void {
 
           const height = isDowntown ? rand(14, 30) : rand(4, 10);
           const footprint = subSize * rand(0.55, 0.8);
-
           const lotId = `${x}_${z}_${lotXi}_${lotZi}`;
-          const building = MeshBuilder.CreateBox(`building_${lotId}`, { width: footprint, height, depth: footprint }, scene);
-          building.position = new Vector3(cellCenterX + ox, height / 2, cellCenterZ + oz);
-          building.receiveShadows = true;
-          building.checkCollisions = true;
+          const position = new Vector3(cellCenterX + ox, 0, cellCenterZ + oz);
 
-          const mat = new PBRMaterial(`buildingMat_${lotId}`, scene);
-          mat.albedoTexture = winTex;
           const v = isDowntown ? rand(0.5, 0.7) : rand(0.6, 0.85);
-          mat.albedoColor = new Color3(v, v, v * 1.05);
-          mat.roughness = 0.6;
-          mat.metallic = 0.1;
-          building.material = mat;
+          createHollowBuilding(scene, lotId, position, footprint, height, new Color3(v, v, v * 1.05), winTex);
         });
       });
     }
+  }
+}
+
+function createHollowBuilding(
+  scene: Scene,
+  id: string,
+  position: Vector3,
+  footprint: number,
+  height: number,
+  color: Color3,
+  winTex: Texture,
+): void {
+  const wallThickness = 0.3;
+  const half = footprint / 2;
+
+  const wallMat = new PBRMaterial(`buildingMat_${id}`, scene);
+  wallMat.albedoTexture = winTex;
+  wallMat.albedoColor = color;
+  wallMat.roughness = 0.6;
+  wallMat.metallic = 0.1;
+
+  const roofMat = new PBRMaterial(`roofMat_${id}`, scene);
+  roofMat.albedoColor = new Color3(0.3, 0.3, 0.32);
+  roofMat.roughness = 0.9;
+
+  const canHaveDoor = footprint >= 4;
+  const doorWidth = Math.min(2.2, footprint * 0.4);
+
+  const addWall = (name: string, w: number, d: number, ox: number, oz: number) => {
+    const wall = MeshBuilder.CreateBox(name, { width: w, height, depth: d }, scene);
+    wall.position = new Vector3(position.x + ox, height / 2, position.z + oz);
+    wall.material = wallMat;
+    wall.checkCollisions = true;
+    wall.receiveShadows = true;
+  };
+
+  if (canHaveDoor) {
+    const segW = (footprint - doorWidth) / 2;
+    addWall(`${id}_wallS_a`, segW, wallThickness, -(doorWidth / 2 + segW / 2), -half + wallThickness / 2);
+    addWall(`${id}_wallS_b`, segW, wallThickness, doorWidth / 2 + segW / 2, -half + wallThickness / 2);
+  } else {
+    addWall(`${id}_wallS`, footprint, wallThickness, 0, -half + wallThickness / 2);
+  }
+
+  addWall(`${id}_wallN`, footprint, wallThickness, 0, half - wallThickness / 2);
+  addWall(`${id}_wallE`, wallThickness, footprint, half - wallThickness / 2, 0);
+  addWall(`${id}_wallW`, wallThickness, footprint, -half + wallThickness / 2, 0);
+
+  const roof = MeshBuilder.CreateBox(`${id}_roof`, { width: footprint, height: wallThickness, depth: footprint }, scene);
+  roof.position = new Vector3(position.x, height, position.z);
+  roof.material = roofMat;
+  roof.checkCollisions = true;
+  roof.receiveShadows = true;
+
+  if (canHaveDoor && height > 8) {
+    createSpiralStaircase(scene, id, position, footprint, height, wallThickness);
+  }
+}
+
+function createSpiralStaircase(
+  scene: Scene,
+  id: string,
+  position: Vector3,
+  footprint: number,
+  height: number,
+  wallThickness: number,
+): void {
+  const stairMat = new PBRMaterial(`stairMat_${id}`, scene);
+  stairMat.albedoColor = new Color3(0.5, 0.5, 0.5);
+  stairMat.roughness = 0.8;
+
+  const radius = Math.min(footprint / 2 - wallThickness - 0.6, 2.2);
+  const risePerSegment = 0.9;
+  const numSegments = Math.max(8, Math.round(height / risePerSegment));
+  const segmentsPerTurn = 8;
+  const angleStep = (Math.PI * 2) / segmentsPerTurn;
+  const actualRise = height / numSegments;
+
+  for (let s = 0; s < numSegments; s++) {
+    const angle0 = s * angleStep;
+    const angle1 = (s + 1) * angleStep;
+    const y0 = s * actualRise;
+    const y1 = (s + 1) * actualRise;
+
+    const x0 = Math.cos(angle0) * radius;
+    const z0 = Math.sin(angle0) * radius;
+    const x1 = Math.cos(angle1) * radius;
+    const z1 = Math.sin(angle1) * radius;
+
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const dy = y1 - y0;
+    const runLen = Math.sqrt(dx * dx + dz * dz);
+    const segLen = Math.sqrt(runLen * runLen + dy * dy);
+
+    const step = MeshBuilder.CreateBox(`${id}_stair_${s}`, { width: 1.2, height: 0.15, depth: segLen }, scene);
+    step.position = new Vector3(position.x + (x0 + x1) / 2, (y0 + y1) / 2, position.z + (z0 + z1) / 2);
+    step.rotation.y = Math.atan2(dx, dz);
+    step.rotation.x = -Math.atan2(dy, runLen);
+    step.material = stairMat;
+    step.checkCollisions = true;
   }
 }
 
