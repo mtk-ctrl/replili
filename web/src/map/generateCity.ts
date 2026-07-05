@@ -5,7 +5,6 @@ import {
   Color3,
   Vector3,
   TransformNode,
-  VertexBuffer,
   DynamicTexture,
   Texture,
 } from '@babylonjs/core';
@@ -19,8 +18,10 @@ const TOTAL_SIZE = CELL_SIZE * GRID_SIZE;
 
 const RING_RADIUS = TOTAL_SIZE / 2 + 30;
 const RING_WIDTH = 6;
-const HILL_RADIUS = RING_RADIUS + 35;
-const WORLD_SIZE = (HILL_RADIUS + 60) * 2;
+const WORLD_SIZE = RING_RADIUS * 2 + 20;
+
+const ELEVATED_HEIGHT = 9;
+const RAMP_LENGTH = CELL_SIZE;
 
 let windowTexture: Texture | null = null;
 
@@ -29,7 +30,7 @@ export function generateCity(scene: Scene): void {
   createRoadGrid(scene);
   createBuildings(scene);
   createRingRoad(scene);
-  createHills(scene);
+  createElevatedHighway(scene);
   createFlags(scene);
   createSpawnMarkers(scene);
 }
@@ -199,55 +200,48 @@ function createRingRoad(scene: Scene): void {
   }
 }
 
-function createHills(scene: Scene): void {
-  const hillAngles = [Math.PI / 3, Math.PI, (5 * Math.PI) / 3];
+function createElevatedHighway(scene: Scene): void {
+  const half = TOTAL_SIZE / 2;
+  const flatLength = TOTAL_SIZE - 2 * RAMP_LENGTH;
+  const slopeLength = Math.sqrt(RAMP_LENGTH * RAMP_LENGTH + ELEVATED_HEIGHT * ELEVATED_HEIGHT);
 
-  hillAngles.forEach((angle, i) => {
-    const center = new Vector3(Math.cos(angle) * HILL_RADIUS, 0, Math.sin(angle) * HILL_RADIUS);
-    createHill(scene, center, 22, rand(10, 14), `hill_${i}`);
-  });
-}
+  const deckMat = new PBRMaterial('highwayDeckMat', scene);
+  deckMat.albedoColor = new Color3(0.28, 0.28, 0.3);
+  deckMat.roughness = 0.8;
+  deckMat.metallic = 0.1;
 
-function createHill(scene: Scene, center: Vector3, radius: number, height: number, name: string): void {
-  const mound = MeshBuilder.CreateGround(name, { width: radius * 2.2, height: radius * 2.2, subdivisions: 24 }, scene);
-  mound.position = new Vector3(center.x, 0, center.z);
+  const pillarMat = new PBRMaterial('highwayPillarMat', scene);
+  pillarMat.albedoColor = new Color3(0.45, 0.45, 0.45);
+  pillarMat.roughness = 0.7;
+  pillarMat.metallic = 0.05;
 
-  const positions = mound.getVerticesData(VertexBuffer.PositionKind);
-  if (positions) {
-    for (let i = 0; i < positions.length; i += 3) {
-      const x = positions[i];
-      const z = positions[i + 2];
-      const dist = Math.sqrt(x * x + z * z);
-      const falloff = Math.max(0, 1 - dist / radius);
-      positions[i + 1] = 0.05 + height * falloff * falloff;
-    }
-    mound.updateVerticesData(VertexBuffer.PositionKind, positions);
-    mound.createNormals(true);
+  const southRamp = MeshBuilder.CreateBox('highway_ramp_south', { width: ROAD_WIDTH, height: 0.4, depth: slopeLength }, scene);
+  southRamp.position = new Vector3(0, ELEVATED_HEIGHT / 2, -half + RAMP_LENGTH / 2);
+  southRamp.rotation.x = -Math.atan2(ELEVATED_HEIGHT, RAMP_LENGTH);
+  southRamp.material = deckMat;
+  southRamp.receiveShadows = true;
+
+  const deck = MeshBuilder.CreateBox('highway_deck', { width: ROAD_WIDTH, height: 0.4, depth: flatLength }, scene);
+  deck.position = new Vector3(0, ELEVATED_HEIGHT, 0);
+  deck.material = deckMat;
+  deck.receiveShadows = true;
+
+  const northRamp = MeshBuilder.CreateBox('highway_ramp_north', { width: ROAD_WIDTH, height: 0.4, depth: slopeLength }, scene);
+  northRamp.position = new Vector3(0, ELEVATED_HEIGHT / 2, half - RAMP_LENGTH / 2);
+  northRamp.rotation.x = Math.atan2(ELEVATED_HEIGHT, RAMP_LENGTH);
+  northRamp.material = deckMat;
+  northRamp.receiveShadows = true;
+
+  const origin = -TOTAL_SIZE / 2;
+  for (let i = 0; i <= GRID_SIZE; i++) {
+    const z = origin + i * CELL_SIZE;
+    if (Math.abs(z) > flatLength / 2 - 1) continue;
+
+    const pillar = MeshBuilder.CreateCylinder(`highway_pillar_${i}`, { diameter: 1.4, height: ELEVATED_HEIGHT }, scene);
+    pillar.position = new Vector3(0, ELEVATED_HEIGHT / 2, z);
+    pillar.material = pillarMat;
+    pillar.receiveShadows = true;
   }
-
-  const mat = new PBRMaterial(`${name}Mat`, scene);
-  mat.albedoColor = new Color3(0.42, 0.52, 0.36);
-  mat.roughness = 0.95;
-  mat.metallic = 0;
-  mound.material = mat;
-
-  const rampLength = radius * 1.1;
-  const ramp = MeshBuilder.CreateBox(`${name}_ramp`, { width: 4, height: 0.4, depth: rampLength }, scene);
-  ramp.position = new Vector3(center.x, height / 2.3, center.z + radius * 0.85);
-  ramp.rotation.x = -Math.atan2(height, rampLength);
-  const rampMat = new PBRMaterial(`${name}_rampMat`, scene);
-  rampMat.albedoColor = new Color3(0.5, 0.5, 0.5);
-  rampMat.roughness = 0.8;
-  ramp.material = rampMat;
-  ramp.receiveShadows = true;
-
-  const tower = MeshBuilder.CreateBox(`${name}_tower`, { width: 4, height: 6, depth: 4 }, scene);
-  tower.position = new Vector3(center.x, height + 3, center.z);
-  const towerMat = new PBRMaterial(`${name}_towerMat`, scene);
-  towerMat.albedoColor = new Color3(0.55, 0.5, 0.45);
-  towerMat.roughness = 0.6;
-  tower.material = towerMat;
-  tower.receiveShadows = true;
 }
 
 function createFlags(scene: Scene): void {

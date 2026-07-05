@@ -7,12 +7,12 @@ const scene = new Scene(engine);
 scene.clearColor = new Color4(0.6, 0.78, 0.92, 1);
 scene.fogMode = Scene.FOGMODE_LINEAR;
 scene.fogColor = new Color3(0.72, 0.82, 0.9);
-scene.fogStart = 220;
-scene.fogEnd = 620;
+scene.fogStart = 160;
+scene.fogEnd = 340;
 
-const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3.2, 160, Vector3.Zero(), scene);
+const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3.2, 140, Vector3.Zero(), scene);
 camera.lowerRadiusLimit = 20;
-camera.upperRadiusLimit = 400;
+camera.upperRadiusLimit = 240;
 camera.attachControl(canvas, true);
 
 const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene);
@@ -27,7 +27,7 @@ generateCity(scene);
 const shadowGenerator = new ShadowGenerator(2048, sun);
 shadowGenerator.usePercentageCloserFiltering = true;
 scene.meshes.forEach((mesh) => {
-  if (mesh.name === 'ground' || mesh.name.startsWith('hill_')) return;
+  if (mesh.name === 'ground') return;
   shadowGenerator.addShadowCaster(mesh as Mesh);
 });
 
