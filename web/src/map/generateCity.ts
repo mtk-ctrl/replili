@@ -37,7 +37,23 @@ const HOUSE_COLORS = [
   new Color3(0.85, 0.75, 0.9),
 ];
 
+export interface DoorRecord {
+  pivot: TransformNode;
+  leaf: import('@babylonjs/core').AbstractMesh;
+  worldPos: Vector3;
+  closedRotation: number;
+  openRotation: number;
+  isOpen: boolean;
+}
+
+const doors: DoorRecord[] = [];
+
+export function getDoors(): DoorRecord[] {
+  return doors;
+}
+
 export function generateCity(scene: Scene): void {
+  doors.length = 0;
   createGround(scene);
   createRoadGrid(scene);
   createSidewalks(scene);
@@ -49,6 +65,23 @@ export function generateCity(scene: Scene): void {
   createFlags(scene);
   createSpawnMarkers(scene);
   createBoundaryFence(scene);
+  registerDoorAnimation(scene);
+}
+
+function registerDoorAnimation(scene: Scene): void {
+  const openSpeed = 6; // radians per second
+  scene.onBeforeRenderObservable.add(() => {
+    const dt = scene.getEngine().getDeltaTime() / 1000;
+    if (dt <= 0) return;
+    for (const door of doors) {
+      const target = door.isOpen ? door.openRotation : door.closedRotation;
+      const current = door.pivot.rotation.y;
+      const diff = target - current;
+      if (Math.abs(diff) < 0.001) continue;
+      const step = Math.sign(diff) * Math.min(Math.abs(diff), openSpeed * dt);
+      door.pivot.rotation.y = current + step;
+    }
+  });
 }
 
 function getWindowTexture(scene: Scene): Texture {
@@ -235,8 +268,8 @@ function createSidewalks(scene: Scene): void {
 
   for (let x = 0; x < GRID_SIZE; x++) {
     for (let z = 0; z < GRID_SIZE; z++) {
-      const cellCenterX = origin + ROAD_WIDTH + x * CELL_SIZE + BLOCK_SIZE / 2;
-      const cellCenterZ = origin + ROAD_WIDTH + z * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterX = origin + ROAD_WIDTH / 2 + x * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterZ = origin + ROAD_WIDTH / 2 + z * CELL_SIZE + BLOCK_SIZE / 2;
       const half = BLOCK_SIZE / 2;
 
       const edges: Array<[number, number, number, number]> = [
@@ -319,20 +352,22 @@ function createIntersectionProps(scene: Scene): void {
         greenLight.position = new Vector3(x - cornerOffset, 4.0, z - cornerOffset - 0.21);
         greenLight.material = greenMat;
 
-        const approaches: Array<[number, number, number]> = [
-          [ROAD_WIDTH, 2.5, 0],
-          [ROAD_WIDTH, -2.5, 0],
-          [2.5, 0, ROAD_WIDTH],
-          [-2.5, 0, ROAD_WIDTH],
+        // one crosswalk band centered on each of the four road arms leaving the intersection
+        const bandOffset = ROAD_WIDTH / 2 + 1.6;
+        const bandThickness = 2.6;
+        const approaches: Array<[number, number, boolean]> = [
+          [0, bandOffset, true], // north arm, spans across the vertical road (x)
+          [0, -bandOffset, true], // south arm
+          [bandOffset, 0, false], // east arm, spans across the horizontal road (z)
+          [-bandOffset, 0, false], // west arm
         ];
-        approaches.forEach(([ox, oz, rotFlag], k) => {
-          const isVertical = rotFlag !== 0;
+        approaches.forEach(([ox, oz, spansX], k) => {
           const crosswalk = MeshBuilder.CreateGround(
             `crosswalk_${i}_${j}_${k}`,
-            { width: isVertical ? ROAD_WIDTH : 2.4, height: isVertical ? 2.4 : ROAD_WIDTH },
+            { width: spansX ? ROAD_WIDTH : bandThickness, height: spansX ? bandThickness : ROAD_WIDTH },
             scene,
           );
-          crosswalk.position = new Vector3(x + ox, 0.07, z + oz);
+          crosswalk.position = new Vector3(x + ox, 0.14, z + oz);
           crosswalk.material = crosswalkMat;
         });
       }
@@ -357,8 +392,8 @@ function createTrees(scene: Scene): void {
     for (let z = 0; z < GRID_SIZE; z++) {
       const distanceFromCenter = Math.max(Math.abs(x - center), Math.abs(z - center));
       const isDowntown = distanceFromCenter <= 1;
-      const cellCenterX = origin + ROAD_WIDTH + x * CELL_SIZE + BLOCK_SIZE / 2;
-      const cellCenterZ = origin + ROAD_WIDTH + z * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterX = origin + ROAD_WIDTH / 2 + x * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterZ = origin + ROAD_WIDTH / 2 + z * CELL_SIZE + BLOCK_SIZE / 2;
       const treeCount = isDowntown ? 1 : Math.floor(rand(1, 4));
 
       for (let t = 0; t < treeCount; t++) {
@@ -391,8 +426,8 @@ function createBuildings(scene: Scene): void {
     for (let z = 0; z < GRID_SIZE; z++) {
       const distanceFromCenter = Math.max(Math.abs(x - center), Math.abs(z - center));
       const isDowntown = distanceFromCenter <= 1;
-      const cellCenterX = origin + ROAD_WIDTH + x * CELL_SIZE + BLOCK_SIZE / 2;
-      const cellCenterZ = origin + ROAD_WIDTH + z * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterX = origin + ROAD_WIDTH / 2 + x * CELL_SIZE + BLOCK_SIZE / 2;
+      const cellCenterZ = origin + ROAD_WIDTH / 2 + z * CELL_SIZE + BLOCK_SIZE / 2;
 
       subOffsets.forEach((ox, lotXi) => {
         subOffsets.forEach((oz, lotZi) => {
@@ -447,10 +482,26 @@ function createHollowBuilding(
     wall.receiveShadows = true;
   };
 
+  const addWallPart = (name: string, w: number, h: number, d: number, ox: number, oy: number, oz: number) => {
+    const wall = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
+    wall.position = new Vector3(position.x + ox, oy, position.z + oz);
+    wall.material = wallMat;
+    wall.checkCollisions = true;
+    wall.receiveShadows = true;
+  };
+
   if (canHaveDoor) {
     const segW = (footprint - doorWidth) / 2;
-    addWall(`${id}_wallS_a`, segW, wallThickness, -(doorWidth / 2 + segW / 2), -half + wallThickness / 2);
-    addWall(`${id}_wallS_b`, segW, wallThickness, doorWidth / 2 + segW / 2, -half + wallThickness / 2);
+    const doorHeight = Math.min(2.6, height - wallThickness);
+    const zFace = -half + wallThickness / 2;
+    // side pillars beside the door (full height)
+    addWall(`${id}_wallS_a`, segW, wallThickness, -(doorWidth / 2 + segW / 2), zFace);
+    addWall(`${id}_wallS_b`, segW, wallThickness, doorWidth / 2 + segW / 2, zFace);
+    // lintel above the door
+    if (height > doorHeight) {
+      addWallPart(`${id}_wallS_lintel`, doorWidth, height - doorHeight, wallThickness, 0, (height + doorHeight) / 2, zFace);
+    }
+    createDoor(scene, id, new Vector3(position.x, 0, position.z + zFace), doorWidth, doorHeight);
   } else {
     addWall(`${id}_wallS`, footprint, wallThickness, 0, -half + wallThickness / 2);
   }
@@ -494,6 +545,43 @@ function createHollowBuilding(
   }
 }
 
+function createDoor(scene: Scene, id: string, doorBase: Vector3, doorWidth: number, doorHeight: number): void {
+  const doorMat = new PBRMaterial(`doorMat_${id}`, scene);
+  doorMat.albedoColor = new Color3(0.45, 0.3, 0.2);
+  doorMat.roughness = 0.7;
+  doorMat.metallic = 0.05;
+
+  // hinge sits at the left edge of the opening
+  const pivot = new TransformNode(`doorPivot_${id}`, scene);
+  pivot.position = new Vector3(doorBase.x - doorWidth / 2, doorHeight / 2, doorBase.z);
+
+  const leaf = MeshBuilder.CreateBox(`door_${id}`, { width: doorWidth, height: doorHeight - 0.1, depth: 0.12 }, scene);
+  // offset so the hinge edge aligns with the pivot
+  leaf.position = new Vector3(doorWidth / 2, 0, 0);
+  leaf.parent = pivot;
+  leaf.material = doorMat;
+  leaf.checkCollisions = true;
+  leaf.receiveShadows = true;
+
+  const knob = MeshBuilder.CreateSphere(`doorKnob_${id}`, { diameter: 0.18 }, scene);
+  knob.position = new Vector3(doorWidth - 0.25, 0, 0.12);
+  knob.parent = leaf;
+  const knobMat = new PBRMaterial(`knobMat_${id}`, scene);
+  knobMat.albedoColor = new Color3(0.8, 0.7, 0.3);
+  knobMat.metallic = 0.7;
+  knobMat.roughness = 0.3;
+  knob.material = knobMat;
+
+  doors.push({
+    pivot,
+    leaf,
+    worldPos: new Vector3(doorBase.x, doorHeight / 2, doorBase.z),
+    closedRotation: 0,
+    openRotation: -Math.PI / 2,
+    isOpen: false,
+  });
+}
+
 function createSpiralStaircase(
   scene: Scene,
   id: string,
@@ -506,12 +594,17 @@ function createSpiralStaircase(
   stairMat.albedoColor = new Color3(0.5, 0.5, 0.5);
   stairMat.roughness = 0.8;
 
-  const radius = Math.min(footprint / 2 - wallThickness - 0.6, 2.2);
-  const risePerSegment = 0.9;
-  const numSegments = Math.max(8, Math.round(height / risePerSegment));
-  const segmentsPerTurn = 8;
+  const radius = Math.min(footprint / 2 - wallThickness - 0.7, 2.4);
+  // gentle helix: aim for a shallow ~16 degree ramp so the capsule climbs easily
+  const slopeAngle = (16 * Math.PI) / 180;
+  const circumference = 2 * Math.PI * radius;
+  const risePerTurn = circumference * Math.tan(slopeAngle);
+  const numTurns = Math.max(1, height / risePerTurn);
+  const segmentsPerTurn = 12;
+  const numSegments = Math.ceil(numTurns * segmentsPerTurn);
   const angleStep = (Math.PI * 2) / segmentsPerTurn;
   const actualRise = height / numSegments;
+  const treadWidth = 1.6;
 
   for (let s = 0; s < numSegments; s++) {
     const angle0 = s * angleStep;
@@ -528,9 +621,10 @@ function createSpiralStaircase(
     const dz = z1 - z0;
     const dy = y1 - y0;
     const runLen = Math.sqrt(dx * dx + dz * dz);
-    const segLen = Math.sqrt(runLen * runLen + dy * dy);
+    // slight overlap so consecutive treads never leave a seam the capsule can catch on
+    const segLen = Math.sqrt(runLen * runLen + dy * dy) * 1.1;
 
-    const step = MeshBuilder.CreateBox(`${id}_stair_${s}`, { width: 1.2, height: 0.15, depth: segLen }, scene);
+    const step = MeshBuilder.CreateBox(`${id}_stair_${s}`, { width: treadWidth, height: 0.15, depth: segLen }, scene);
     step.position = new Vector3(position.x + (x0 + x1) / 2, (y0 + y1) / 2, position.z + (z0 + z1) / 2);
     step.rotation.y = Math.atan2(dx, dz);
     step.rotation.x = -Math.atan2(dy, runLen);

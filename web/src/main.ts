@@ -36,3 +36,8 @@ scene.meshes.forEach((mesh) => {
 
 engine.runRenderLoop(() => scene.render());
 window.addEventListener('resize', () => engine.resize());
+
+if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+  (window as unknown as { __scene: Scene; __camera: ArcRotateCamera }).__scene = scene;
+  (window as unknown as { __scene: Scene; __camera: ArcRotateCamera }).__camera = camera;
+}

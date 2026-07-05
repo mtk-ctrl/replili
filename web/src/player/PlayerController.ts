@@ -1,6 +1,8 @@
 import { Scene, MeshBuilder, PBRMaterial, Color3, Vector3, ArcRotateCamera, TransformNode } from '@babylonjs/core';
+import { getDoors } from '../map/generateCity';
 
 const MOVE_SPEED = 6;
+const DOOR_REACH = 3.0;
 const RUN_MULTIPLIER = 1.6;
 const GRAVITY = -18;
 const JUMP_SPEED = 7;
@@ -31,6 +33,7 @@ export function createPlayer(scene: Scene, camera: ArcRotateCamera, spawnPositio
   const keys: Record<string, boolean> = {};
   window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
+    if (e.code === 'KeyE') toggleNearestDoor(player.position);
   });
   window.addEventListener('keyup', (e) => {
     keys[e.code] = false;
@@ -73,4 +76,20 @@ export function createPlayer(scene: Scene, camera: ArcRotateCamera, spawnPositio
       verticalVelocity = keys.Space ? JUMP_SPEED : 0;
     }
   });
+}
+
+function toggleNearestDoor(playerPos: Vector3): void {
+  const doors = getDoors();
+  let nearest: (typeof doors)[number] | null = null;
+  let nearestDist = DOOR_REACH;
+  for (const door of doors) {
+    const dx = door.worldPos.x - playerPos.x;
+    const dz = door.worldPos.z - playerPos.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = door;
+    }
+  }
+  if (nearest) nearest.isOpen = !nearest.isOpen;
 }
