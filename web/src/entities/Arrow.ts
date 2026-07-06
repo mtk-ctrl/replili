@@ -11,7 +11,7 @@ export class Arrow {
   private vx: number;
   private vy: number;
   private traveled = 0;
-  private sprite: Phaser.GameObjects.Rectangle;
+  readonly sprite: Phaser.GameObjects.Rectangle;
 
   constructor(scene: Phaser.Scene, x: number, y: number, angleRad: number, team: TeamId) {
     this.x = x;

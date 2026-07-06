@@ -158,15 +158,19 @@ export class LabMap {
   }
 
   getDoorAt(x: number, y: number, radius: number): Door | null {
-    for (const room of this.rooms) {
-      for (const door of room.doors) {
-        const dist = Math.hypot(door.x - x, door.y - y);
-        if (dist <= radius + 30) {
-          return door;
-        }
+    const currentRoom = this.getRoomAt(x, y);
+    if (!currentRoom) return null;
+
+    let best: Door | null = null;
+    let bestDist = Infinity;
+    for (const door of currentRoom.doors) {
+      const dist = Math.hypot(door.x - x, door.y - y);
+      if (dist <= radius && dist < bestDist) {
+        bestDist = dist;
+        best = door;
       }
     }
-    return null;
+    return best;
   }
 
   isFree(x: number, y: number, radius: number): boolean {
@@ -225,45 +229,194 @@ export class LabMap {
     return path;
   }
 
-  render(scene: Phaser.Scene): void {
+  private renderFloor(g: Phaser.GameObjects.Graphics, room: Room): void {
+    const TILE = 30;
+    for (let ty = room.y; ty < room.y + room.h; ty += TILE) {
+      for (let tx = room.x; tx < room.x + room.w; tx += TILE) {
+        const w = Math.min(TILE, room.x + room.w - tx);
+        const h = Math.min(TILE, room.y + room.h - ty);
+        const checker = (Math.round((tx - room.x) / TILE) + Math.round((ty - room.y) / TILE)) % 2 === 0;
+        g.fillStyle(checker ? 0x3d3d3d : 0x363636, 1);
+        g.fillRect(tx, ty, w, h);
+      }
+    }
+
+    g.lineStyle(1, 0x2f2f2f, 0.5);
+    for (let ty = room.y; ty <= room.y + room.h; ty += TILE) {
+      g.beginPath();
+      g.moveTo(room.x, ty);
+      g.lineTo(room.x + room.w, ty);
+      g.strokePath();
+    }
+    for (let tx = room.x; tx <= room.x + room.w; tx += TILE) {
+      g.beginPath();
+      g.moveTo(tx, room.y);
+      g.lineTo(tx, room.y + room.h);
+      g.strokePath();
+    }
+  }
+
+  private renderShadow(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number): void {
+    g.fillStyle(0x000000, 0.28);
+    g.fillEllipse(x + w / 2 + 4, y + h + 3, w * 0.9, 10);
+  }
+
+  private renderBookshelf(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+    const w = 42;
+    const h = 64;
+    this.renderShadow(g, x, y, w, h);
+
+    g.fillStyle(0x5c4632, 1);
+    g.fillRect(x, y, w, h);
+    g.lineStyle(2, 0x3a2c1e, 1);
+    g.strokeRect(x, y, w, h);
+
+    const shelfCount = 3;
+    const bookColors = [0xac4b3d, 0x3f6b8f, 0x6b8f3f, 0xc9a227, 0x8f3f6b];
+    for (let s = 0; s < shelfCount; s++) {
+      const shelfY = y + 6 + s * ((h - 12) / shelfCount);
+      const shelfH = (h - 12) / shelfCount - 4;
+      g.lineStyle(2, 0x3a2c1e, 1);
+      g.beginPath();
+      g.moveTo(x + 2, shelfY + shelfH + 2);
+      g.lineTo(x + w - 2, shelfY + shelfH + 2);
+      g.strokePath();
+
+      let bx = x + 4;
+      while (bx < x + w - 6) {
+        const bookW = 4 + Math.random() * 3;
+        g.fillStyle(bookColors[Math.floor(Math.random() * bookColors.length)], 1);
+        g.fillRect(bx, shelfY, Math.min(bookW, x + w - 4 - bx), shelfH);
+        bx += bookW + 1;
+      }
+    }
+  }
+
+  private renderLabTable(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+    const w = 56;
+    const h = 30;
+    this.renderShadow(g, x, y, w, h);
+
+    g.fillStyle(0xdcdcdc, 1);
+    g.fillRect(x, y, w, h);
+    g.lineStyle(2, 0x9a9a9a, 1);
+    g.strokeRect(x, y, w, h);
+    g.fillStyle(0xffffff, 0.25);
+    g.fillRect(x + 2, y + 2, w - 4, 4);
+
+    g.fillStyle(0x6fae6f, 0.85);
+    g.fillCircle(x + w * 0.3, y + h * 0.5, 6);
+    g.fillStyle(0xffffff, 0.5);
+    g.fillCircle(x + w * 0.3 - 2, y + h * 0.5 - 2, 2);
+
+    g.fillStyle(0x6f9fae, 0.85);
+    g.fillCircle(x + w * 0.65, y + h * 0.5, 5);
+    g.fillStyle(0xffffff, 0.5);
+    g.fillCircle(x + w * 0.65 - 1.5, y + h * 0.5 - 1.5, 1.5);
+  }
+
+  private renderServerRack(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+    const w = 34;
+    const h = 60;
+    this.renderShadow(g, x, y, w, h);
+
+    g.fillStyle(0x22262b, 1);
+    g.fillRect(x, y, w, h);
+    g.lineStyle(2, 0x11141a, 1);
+    g.strokeRect(x, y, w, h);
+
+    const lightColors = [0x4ade80, 0x4ade80, 0xfacc15, 0xef4444];
+    for (let row = 0; row < 7; row++) {
+      const ly = y + 6 + row * 7;
+      g.lineStyle(1, 0x3a3f47, 1);
+      g.beginPath();
+      g.moveTo(x + 3, ly + 5);
+      g.lineTo(x + w - 3, ly + 5);
+      g.strokePath();
+      g.fillStyle(lightColors[Math.floor(Math.random() * lightColors.length)], 0.9);
+      g.fillCircle(x + w - 7, ly + 2, 1.6);
+    }
+  }
+
+  private renderRug(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number, color: number): void {
+    g.fillStyle(0x000000, 0.15);
+    g.fillEllipse(cx + 3, cy + 4, r * 2.1, r * 1.6);
+    g.fillStyle(color, 0.35);
+    g.fillEllipse(cx, cy, r * 2, r * 1.5);
+    g.lineStyle(2, color, 0.55);
+    g.strokeEllipse(cx, cy, r * 2, r * 1.5);
+  }
+
+  render(scene: Phaser.Scene, container?: Phaser.GameObjects.Container): Phaser.GameObjects.Graphics {
     const g = scene.add.graphics();
-    g.fillStyle(0x2a2a2a, 1);
+    g.fillStyle(0x1c1e22, 1);
     g.fillRect(0, 0, this.width, this.height);
 
     for (const room of this.rooms) {
-      g.fillStyle(0x3a3a3a, 1);
-      g.fillRect(room.x, room.y, room.w, room.h);
-      g.lineStyle(2, 0x555555, 1);
+      this.renderFloor(g, room);
+
+      g.fillStyle(0x000000, 0.3);
+      g.fillRect(room.x, room.y, room.w, 4);
+      g.fillRect(room.x, room.y, 4, room.h);
+
+      g.lineStyle(3, 0x50565e, 1);
       g.strokeRect(room.x, room.y, room.w, room.h);
 
-      g.fillStyle(0x4a5f6f, 0.6);
-      g.fillRect(room.x + 20, room.y + 20, 40, 60);
-      g.fillRect(room.x + room.w - 60, room.y + 20, 40, 60);
-
-      g.fillStyle(0x5a7a6f, 0.4);
-      g.fillCircle(room.x + room.w * 0.25, room.y + room.h * 0.75, 15);
-      g.fillCircle(room.x + room.w * 0.75, room.y + room.h * 0.75, 15);
+      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, 46, 0x3f6b8f);
+      this.renderBookshelf(g, room.x + 14, room.y + 12);
+      this.renderBookshelf(g, room.x + room.w - 56, room.y + 12);
+      this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + room.h - 44);
+      this.renderServerRack(g, room.x + room.w - 46, room.y + room.h - 72);
     }
 
     for (const room of this.rooms) {
       for (const door of room.doors) {
-        g.fillStyle(0x8b7355, 1);
-        g.fillRect(door.x - DOOR_SIZE / 2, door.y - DOOR_SIZE / 2, DOOR_SIZE, DOOR_SIZE);
-        g.lineStyle(1, 0x5f4a3a, 1);
-        g.strokeRect(door.x - DOOR_SIZE / 2, door.y - DOOR_SIZE / 2, DOOR_SIZE, DOOR_SIZE);
+        const isHorizontal = door.direction === "east" || door.direction === "west";
+        const dw = isHorizontal ? 14 : DOOR_SIZE;
+        const dh = isHorizontal ? DOOR_SIZE : 14;
+
+        g.fillStyle(0x4a3826, 1);
+        g.fillRect(door.x - dw / 2 - 3, door.y - dh / 2 - 3, dw + 6, dh + 6);
+
+        g.fillStyle(0x8b6a45, 1);
+        g.fillRect(door.x - dw / 2, door.y - dh / 2, dw, dh);
+        const plankSpacing = isHorizontal ? 4 : 10;
+        g.lineStyle(1, 0x6b4f30, 0.8);
+        if (isHorizontal) {
+          for (let py = door.y - dh / 2 + plankSpacing; py < door.y + dh / 2; py += plankSpacing) {
+            g.beginPath();
+            g.moveTo(door.x - dw / 2, py);
+            g.lineTo(door.x + dw / 2, py);
+            g.strokePath();
+          }
+        } else {
+          for (let px = door.x - dw / 2 + plankSpacing; px < door.x + dw / 2; px += plankSpacing) {
+            g.beginPath();
+            g.moveTo(px, door.y - dh / 2);
+            g.lineTo(px, door.y + dh / 2);
+            g.strokePath();
+          }
+        }
+
+        g.fillStyle(0xd4af37, 1);
+        g.fillCircle(door.x + (isHorizontal ? dw / 2 - 3 : 0), door.y + (isHorizontal ? 0 : dh / 2 - 3), 2.2);
       }
     }
 
     for (const spawn of this.flagSpawns) {
-      g.fillStyle(0x3f6b3f, 0.5);
+      g.fillStyle(0x3f6b3f, 0.45);
       g.fillCircle(spawn.x, spawn.y, 80);
+      g.lineStyle(2, 0x3f6b3f, 0.7);
+      g.strokeCircle(spawn.x, spawn.y, 80);
     }
 
-    g.fillStyle(0xac3d29, 0.22);
+    g.fillStyle(0xac3d29, 0.2);
     g.fillCircle(this.baseSpawns.red.x, this.baseSpawns.red.y, 100);
-    g.fillStyle(0x285f85, 0.22);
+    g.fillStyle(0x285f85, 0.2);
     g.fillCircle(this.baseSpawns.blue.x, this.baseSpawns.blue.y, 100);
 
     g.setDepth(-10);
+    if (container) container.add(g);
+    return g;
   }
 }

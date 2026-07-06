@@ -40,6 +40,8 @@ export class MainScene extends Phaser.Scene {
   private fovLayer!: Phaser.GameObjects.Graphics;
   private doorPromptText!: Phaser.GameObjects.Text;
   private nearbyDoor: any | null = null;
+  private worldContainer!: Phaser.GameObjects.Container;
+  private readonly ZOOM = 2.2;
 
   constructor() {
     super("main");
@@ -48,10 +50,14 @@ export class MainScene extends Phaser.Scene {
   create(): void {
     this.labMap = new LabMap();
     this.map = this.labMap as unknown as TownMap;
-    this.map.render(this);
-    this.cameras.main.setBounds(0, 0, this.map.width, this.map.height);
+    this.worldContainer = this.add.container(0, 0);
+    this.labMap.render(this, this.worldContainer);
 
-    this.flags = this.map.flagSpawns.map((spawn) => new Flag(this, spawn.x, spawn.y));
+    this.flags = this.map.flagSpawns.map((spawn) => {
+      const flag = new Flag(this, spawn.x, spawn.y);
+      this.worldContainer.add(flag.gfx);
+      return flag;
+    });
 
     this.roster = {
       red: { human: null, bots: [] },
@@ -60,20 +66,21 @@ export class MainScene extends Phaser.Scene {
 
     const redSpawn = this.map.baseSpawns.red;
     this.player = new Character(this, this.map, "red", redSpawn.x, redSpawn.y, true);
+    this.worldContainer.add(this.player.container);
     this.roster.red.human = this.player;
 
     for (let i = 1; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("red", i);
     for (let i = 0; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("blue", i);
 
-    this.cameras.main.startFollow(this.player, true, 0.5, 0.5);
-
     this.match = new MatchManager(GAME_CONFIG.MATCH_SECONDS);
     this.setupInput();
     this.setupHud();
     this.showTitleScreen();
+    this.updateCameraContainer();
   }
 
   update(time: number, delta: number): void {
+    this.updateCameraContainer();
     if (!this.gameStarted) return;
 
     const dt = delta / 1000;
@@ -106,8 +113,20 @@ export class MainScene extends Phaser.Scene {
     const x = base.x + Math.cos(angle) * 60;
     const y = base.y + Math.sin(angle) * 60;
     const character = new Character(this, this.map, team, x, y, false);
+    this.worldContainer.add(character.container);
     const ai = new BotAI(character, this.map, this.flags, this.map.baseSpawns);
     this.roster[team].bots.push({ character, ai });
+  }
+
+  private updateCameraContainer(): void {
+    const halfViewW = this.scale.width / 2 / this.ZOOM;
+    const halfViewH = this.scale.height / 2 / this.ZOOM;
+    const camX = Phaser.Math.Clamp(this.player.x, halfViewW, this.map.width - halfViewW);
+    const camY = Phaser.Math.Clamp(this.player.y, halfViewH, this.map.height - halfViewH);
+    const offsetX = this.scale.width / 2 - camX * this.ZOOM;
+    const offsetY = this.scale.height / 2 - camY * this.ZOOM;
+    this.worldContainer.setPosition(offsetX, offsetY);
+    this.worldContainer.setScale(this.ZOOM);
   }
 
   private setupInput(): void {
@@ -172,6 +191,7 @@ export class MainScene extends Phaser.Scene {
 
     this.fovLayer = this.add.graphics();
     this.fovLayer.setDepth(99);
+    this.worldContainer.add(this.fovLayer);
 
     this.doorPromptText = this.add
       .text(this.scale.width / 2, this.scale.height - 40, "", {
@@ -189,7 +209,7 @@ export class MainScene extends Phaser.Scene {
 
   private showTitleScreen(): void {
     const bgRect = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0c1118);
-    bgRect.setScrollFactor(0).setDepth(200);
+    bgRect.setOrigin(0, 0).setScrollFactor(0).setDepth(200);
 
     const titleText = this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 80, "FLAG CRAFTERS", {
@@ -310,7 +330,9 @@ export class MainScene extends Phaser.Scene {
   private spawnArrow(shooter: Character, angle: number): void {
     const x = shooter.x + Math.cos(angle) * (shooter.radius + 6);
     const y = shooter.y + Math.sin(angle) * (shooter.radius + 6);
-    this.arrows.push(new Arrow(this, x, y, angle, shooter.team));
+    const arrow = new Arrow(this, x, y, angle, shooter.team);
+    this.worldContainer.add(arrow.sprite);
+    this.arrows.push(arrow);
   }
 
   private updateArrows(dt: number): void {
@@ -400,8 +422,6 @@ export class MainScene extends Phaser.Scene {
         this.fovLayer.fillRect(room.x, room.y, room.w, room.h);
       }
     }
-
-    this.fovLayer.setScrollFactor(1, 1);
   }
 
   private updateDoorProximity(): void {

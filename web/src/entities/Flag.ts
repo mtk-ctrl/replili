@@ -11,7 +11,7 @@ export class Flag {
 
   private capturingTeam: TeamId | null = null;
   private progress = 0;
-  private gfx: Phaser.GameObjects.Graphics;
+  readonly gfx: Phaser.GameObjects.Graphics;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.x = x;

@@ -28,7 +28,7 @@ export class Character {
 
   private scene: Phaser.Scene;
   private map: TownMap;
-  private container: Phaser.GameObjects.Container;
+  readonly container: Phaser.GameObjects.Container;
   private facingGfx: Phaser.GameObjects.Rectangle;
   private hpBarFill: Phaser.GameObjects.Rectangle;
 
