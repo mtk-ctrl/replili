@@ -38,6 +38,8 @@ export class MainScene extends Phaser.Scene {
   private resultText!: Phaser.GameObjects.Text;
   private weaponText!: Phaser.GameObjects.Text;
   private fovLayer!: Phaser.GameObjects.Graphics;
+  private doorPromptText!: Phaser.GameObjects.Text;
+  private nearbyDoor: any | null = null;
 
   constructor() {
     super("main");
@@ -63,7 +65,7 @@ export class MainScene extends Phaser.Scene {
     for (let i = 1; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("red", i);
     for (let i = 0; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("blue", i);
 
-    this.cameras.main.startFollow(this.player, true, 0.15, 0.15);
+    this.cameras.main.startFollow(this.player, true, 0.5, 0.5);
 
     this.match = new MatchManager(GAME_CONFIG.MATCH_SECONDS);
     this.setupInput();
@@ -95,6 +97,7 @@ export class MainScene extends Phaser.Scene {
     this.match.tick(delta, this.flags);
     this.updateHud();
     this.applyFOVCulling();
+    this.updateDoorProximity();
   }
 
   private spawnBot(team: TeamId, index: number): void {
@@ -169,6 +172,19 @@ export class MainScene extends Phaser.Scene {
 
     this.fovLayer = this.add.graphics();
     this.fovLayer.setDepth(99);
+
+    this.doorPromptText = this.add
+      .text(this.scale.width / 2, this.scale.height - 40, "", {
+        fontFamily: "monospace",
+        fontSize: "14px",
+        color: "#ffd700",
+        align: "center",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(100)
+      .setVisible(false);
   }
 
   private showTitleScreen(): void {
@@ -176,10 +192,22 @@ export class MainScene extends Phaser.Scene {
     bgRect.setScrollFactor(0).setDepth(200);
 
     const titleText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 60, "FLAG CRAFTERS", {
+      .text(this.scale.width / 2, this.scale.height / 2 - 80, "FLAG CRAFTERS", {
         fontFamily: "georgia, serif",
-        fontSize: "48px",
+        fontSize: "56px",
         color: "#f2e9d8",
+        align: "center",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(201);
+
+    const subtitleText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 15, "3×3 Lab • Red vs Blue", {
+        fontFamily: "monospace",
+        fontSize: "13px",
+        color: "#888888",
         align: "center",
       })
       .setOrigin(0.5)
@@ -187,24 +215,25 @@ export class MainScene extends Phaser.Scene {
       .setDepth(201);
 
     const startButton = this.add
-      .rectangle(this.scale.width / 2, this.scale.height / 2 + 40, 150, 50, 0xc9c2b2)
+      .rectangle(this.scale.width / 2, this.scale.height / 2 + 60, 180, 60, 0x667eea)
       .setScrollFactor(0)
       .setDepth(201)
       .setInteractive({ useHandCursor: true })
       .on("pointerdown", () => this.startGame());
 
     const buttonText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 + 40, "START", {
+      .text(this.scale.width / 2, this.scale.height / 2 + 60, "START GAME", {
         fontFamily: "monospace",
-        fontSize: "20px",
-        color: "#0c1118",
+        fontSize: "18px",
+        color: "#ffffff",
         align: "center",
+        fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(202);
 
-    this.titleScreen = this.add.container(0, 0, [bgRect, titleText, startButton, buttonText]);
+    this.titleScreen = this.add.container(0, 0, [bgRect, titleText, subtitleText, startButton, buttonText]);
   }
 
   private startGame(): void {
@@ -214,14 +243,6 @@ export class MainScene extends Phaser.Scene {
     if (playerRoom) {
       this.currentRoom = playerRoom.id;
       this.visitedRooms.add(playerRoom.id);
-    }
-  }
-
-  private tryEnterDoor(): void {
-    if (!this.gameStarted || this.match.isOver) return;
-    const door = this.labMap.getDoorAt(this.player.x, this.player.y, 40);
-    if (door) {
-      this.visitedRooms.add(door.targetRoomId);
     }
   }
 
@@ -381,5 +402,52 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.fovLayer.setScrollFactor(1, 1);
+  }
+
+  private updateDoorProximity(): void {
+    const door = this.labMap.getDoorAt(this.player.x, this.player.y, 60);
+
+    if (door) {
+      this.nearbyDoor = door;
+      this.doorPromptText.setText("🔓 Press E to open door");
+      this.doorPromptText.setVisible(true);
+    } else {
+      this.nearbyDoor = null;
+      this.doorPromptText.setVisible(false);
+    }
+  }
+
+  private tryEnterDoor(): void {
+    if (!this.gameStarted || this.match.isOver || !this.nearbyDoor) return;
+
+    const door = this.nearbyDoor;
+    const targetRoom = this.labMap.rooms[door.targetRoomId];
+    if (!targetRoom) return;
+
+    this.visitedRooms.add(door.targetRoomId);
+
+    let newX = this.player.x;
+    let newY = this.player.y;
+
+    switch (door.direction) {
+      case "east":
+        newX = targetRoom.x + 30;
+        newY = door.y;
+        break;
+      case "west":
+        newX = targetRoom.x + targetRoom.w - 30;
+        newY = door.y;
+        break;
+      case "south":
+        newX = door.x;
+        newY = targetRoom.y + 30;
+        break;
+      case "north":
+        newX = door.x;
+        newY = targetRoom.y + targetRoom.h - 30;
+        break;
+    }
+
+    this.player.teleportTo(newX, newY);
   }
 }
