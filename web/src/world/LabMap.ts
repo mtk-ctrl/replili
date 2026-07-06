@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { TeamId } from "../config";
+import { GAME_CONFIG, type TeamId } from "../config";
 
 interface Rect {
   x: number;
@@ -105,10 +105,15 @@ export class LabMap {
       blue: { x: this.rooms[blueBlock].x + this.rooms[blueBlock].w / 2, y: this.rooms[blueBlock].y + this.rooms[blueBlock].h / 2 },
     };
 
-    const flagCellIds = [cellId(GRID_COLS - 1, 0), cellId(centerCol, centerRow), cellId(0, GRID_ROWS - 1)];
-    for (const fcid of flagCellIds) {
-      const room = this.rooms[cellToBlock[fcid]];
-      this.flagSpawns.push({ x: room.x + room.w / 2, y: room.y + room.h / 2 });
+    // Select flag spawn locations from reserved cells (excluding team spawns)
+    const teamSpawns = new Set([cellId(0, 0), cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
+    const availableFlagCells = [cellId(GRID_COLS - 1, 0), cellId(centerCol, centerRow), cellId(0, GRID_ROWS - 1), cellId(GRID_COLS - 1, centerRow), cellId(centerCol, GRID_ROWS - 1)];
+    for (let i = 0; i < GAME_CONFIG.FLAG_COUNT && i < availableFlagCells.length; i++) {
+      const fcid = availableFlagCells[i];
+      if (!teamSpawns.has(fcid)) {
+        const room = this.rooms[cellToBlock[fcid]];
+        this.flagSpawns.push({ x: room.x + room.w / 2, y: room.y + room.h / 2 });
+      }
     }
   }
 
