@@ -14,8 +14,8 @@ export const TEAM_COLOR: Record<TeamId, number> = {
 // Anything marked "仮" is a placeholder the user asked to leave to us for now.
 export const GAME_CONFIG = {
   MATCH_SECONDS: 180,
-  PLAYERS_PER_TEAM: 3,
-  FLAG_COUNT: 3, // must stay odd so a plain tie is structurally rare
+  PLAYERS_PER_TEAM: 5,
+  FLAG_COUNT: 5, // must stay odd so a plain tie is structurally rare
 
   MAX_HEALTH: 100,
   MOVE_SPEED: 220,

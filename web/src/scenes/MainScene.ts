@@ -74,6 +74,14 @@ export class MainScene extends Phaser.Scene {
     this.setupHud();
     this.showTitleScreen();
     this.updateCameraContainer();
+
+    (window as any).__debug = {
+      scene: this,
+      labMap: this.labMap,
+      roster: this.roster,
+      flags: this.flags,
+      arrows: this.arrows,
+    };
   }
 
   update(time: number, delta: number): void {

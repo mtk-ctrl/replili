@@ -430,12 +430,32 @@ export class LabMap {
 
     const path: Point[] = [];
     let cur = goalNode;
+    const nodeSequence: number[] = [];
     while (cur !== -1 && cur !== startNode) {
       path.unshift(this.nodePos[cur]);
+      nodeSequence.unshift(cur);
       cur = prev[cur];
     }
-    path.push({ x: toX, y: toY });
-    return path;
+
+    // Insert door waypoints between consecutive rooms to guide bots through connectors safely
+    const refinedPath: Point[] = [];
+    for (let i = 0; i < nodeSequence.length; i++) {
+      const fromNodeId = i === 0 ? startNode : nodeSequence[i - 1];
+      const toNodeId = nodeSequence[i];
+
+      // Find the door between these two rooms
+      const fromRoom = this.rooms[fromNodeId];
+      for (const door of fromRoom.doors) {
+        if (door.targetRoomId === toNodeId) {
+          refinedPath.push({ x: door.x, y: door.y });
+          break;
+        }
+      }
+      refinedPath.push(path[i]);
+    }
+
+    refinedPath.push({ x: toX, y: toY });
+    return refinedPath;
   }
 
   private renderFloor(g: Phaser.GameObjects.Graphics, room: Room): void {

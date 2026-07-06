@@ -126,8 +126,16 @@ export class Character {
 
     const nextX = this.x + vx * dtSeconds;
     const nextY = this.y + vy * dtSeconds;
-    if (this.map.isFree(nextX, this.y, this.radius)) this.x = nextX;
-    if (this.map.isFree(this.x, nextY, this.radius)) this.y = nextY;
+
+    // Try full diagonal movement first, then fall back to axis-aligned sliding
+    if (this.map.isFree(nextX, nextY, this.radius)) {
+      this.x = nextX;
+      this.y = nextY;
+    } else {
+      // Try X and Y separately to slide along walls smoothly
+      if (this.map.isFree(nextX, this.y, this.radius)) this.x = nextX;
+      if (this.map.isFree(this.x, nextY, this.radius)) this.y = nextY;
+    }
 
     this.container.setPosition(this.x, this.y);
     this.facingGfx.setPosition(Math.cos(this.facing) * (this.radius - 2), Math.sin(this.facing) * (this.radius - 2));
