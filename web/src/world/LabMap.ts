@@ -32,13 +32,16 @@ export interface Room {
   doors: Door[];
 }
 
-const GRID_COLS = 5;
-const GRID_ROWS = 5;
+const GRID_COLS = 7;
+const GRID_ROWS = 7;
 const CELL_W = 320;
 const CELL_H = 240;
 const WALL_PAD = 12;
+const HALL_PAD = 4;
 const DOOR_SIZE = 52;
-const EXTRA_EDGE_CHANCE = 0.22;
+const EXTRA_EDGE_CHANCE = 0.2;
+const HALL_COUNT = 3;
+const CORRIDOR3_COUNT = 6;
 
 function mulberry32(seed: number) {
   return function random() {
@@ -50,9 +53,18 @@ function mulberry32(seed: number) {
   };
 }
 
-interface Edge {
-  a: number;
-  b: number;
+type BlockKind = "hall" | "corridor3" | "single";
+
+interface Block {
+  id: number;
+  cells: { col: number; row: number }[];
+  kind: BlockKind;
+}
+
+interface CellEdge {
+  blockA: number;
+  blockB: number;
+  cellA: { col: number; row: number };
   dir: "east" | "south";
 }
 
@@ -70,129 +82,231 @@ export class LabMap {
 
   constructor(seed = 20260706) {
     const rng = mulberry32(seed);
-    const edges = this.buildMaze(rng);
-    this.generateRooms(edges, rng);
-    this.setupPathfinding();
-
-    this.baseSpawns = {
-      red: { x: this.rooms[0].x + this.rooms[0].w / 2, y: this.rooms[0].y + this.rooms[0].h / 2 },
-      blue: {
-        x: this.rooms[this.rooms.length - 1].x + this.rooms[this.rooms.length - 1].w / 2,
-        y: this.rooms[this.rooms.length - 1].y + this.rooms[this.rooms.length - 1].h / 2,
-      },
-    };
-
+    const cellId = (col: number, row: number) => row * GRID_COLS + col;
     const centerCol = Math.floor(GRID_COLS / 2);
     const centerRow = Math.floor(GRID_ROWS / 2);
-    const flagCells = [
-      { col: GRID_COLS - 1, row: 0 },
-      { col: centerCol, row: centerRow },
-      { col: 0, row: GRID_ROWS - 1 },
-    ];
-    for (const cell of flagCells) {
-      const room = this.rooms[cell.row * GRID_COLS + cell.col];
+    const reservedCellIds = new Set<number>([
+      cellId(0, 0),
+      cellId(GRID_COLS - 1, GRID_ROWS - 1),
+      cellId(GRID_COLS - 1, 0),
+      cellId(centerCol, centerRow),
+      cellId(0, GRID_ROWS - 1),
+    ]);
+
+    const { cellToBlock, blocks } = this.buildBlocks(rng, reservedCellIds);
+    const edges = this.buildMaze(rng, cellToBlock, blocks.length);
+    this.generateRooms(blocks, edges, reservedCellIds, cellToBlock);
+    this.setupPathfinding();
+
+    const redBlock = cellToBlock[cellId(0, 0)];
+    const blueBlock = cellToBlock[cellId(GRID_COLS - 1, GRID_ROWS - 1)];
+    this.baseSpawns = {
+      red: { x: this.rooms[redBlock].x + this.rooms[redBlock].w / 2, y: this.rooms[redBlock].y + this.rooms[redBlock].h / 2 },
+      blue: { x: this.rooms[blueBlock].x + this.rooms[blueBlock].w / 2, y: this.rooms[blueBlock].y + this.rooms[blueBlock].h / 2 },
+    };
+
+    const flagCellIds = [cellId(GRID_COLS - 1, 0), cellId(centerCol, centerRow), cellId(0, GRID_ROWS - 1)];
+    for (const fcid of flagCellIds) {
+      const room = this.rooms[cellToBlock[fcid]];
       this.flagSpawns.push({ x: room.x + room.w / 2, y: room.y + room.h / 2 });
     }
   }
 
-  private cellId(col: number, row: number): number {
-    return row * GRID_COLS + col;
-  }
-
-  /** Randomized Prim's algorithm spanning tree over the grid, plus a few extra loop edges so routes aren't single-file. */
-  private buildMaze(rng: () => number): Edge[] {
+  /** Partitions the grid into single cells plus a handful of merged 2x2 halls and 1x3/3x1 corridors for size variety. */
+  private buildBlocks(
+    rng: () => number,
+    reservedCellIds: Set<number>
+  ): { cellToBlock: number[]; blocks: Block[] } {
     const totalCells = GRID_COLS * GRID_ROWS;
-    const visited = new Uint8Array(totalCells);
-    const connected: Edge[] = [];
-    const frontier: Edge[] = [];
+    const cellToBlock = new Array<number>(totalCells).fill(-1);
+    const blocks: Block[] = [];
+    const cellId = (col: number, row: number) => row * GRID_COLS + col;
 
-    const neighborsOf = (id: number): Edge[] => {
-      const col = id % GRID_COLS;
-      const row = Math.floor(id / GRID_COLS);
-      const list: Edge[] = [];
-      if (col < GRID_COLS - 1) list.push({ a: id, b: this.cellId(col + 1, row), dir: "east" });
-      if (row < GRID_ROWS - 1) list.push({ a: id, b: this.cellId(col, row + 1), dir: "south" });
-      if (col > 0) list.push({ a: this.cellId(col - 1, row), b: id, dir: "east" });
-      if (row > 0) list.push({ a: this.cellId(col, row - 1), b: id, dir: "south" });
-      return list;
+    const tryPlace = (cells: { col: number; row: number }[], kind: BlockKind): boolean => {
+      // Reserved cells (spawns/flags) may only ever end up as their own 1x1 room —
+      // never merged into a bigger hall/corridor block.
+      const ok = cells.every((c) => {
+        const id = cellId(c.col, c.row);
+        const blockedByReservation = cells.length > 1 && reservedCellIds.has(id);
+        return cellToBlock[id] === -1 && !blockedByReservation;
+      });
+      if (!ok) return false;
+      const id = blocks.length;
+      blocks.push({ id, cells, kind });
+      for (const c of cells) cellToBlock[cellId(c.col, c.row)] = id;
+      return true;
     };
 
-    visited[0] = 1;
-    frontier.push(...neighborsOf(0));
+    let hallsPlaced = 0;
+    for (let attempts = 0; hallsPlaced < HALL_COUNT && attempts < 400; attempts++) {
+      const col = Math.floor(rng() * (GRID_COLS - 1));
+      const row = Math.floor(rng() * (GRID_ROWS - 1));
+      const cells = [
+        { col, row },
+        { col: col + 1, row },
+        { col, row: row + 1 },
+        { col: col + 1, row: row + 1 },
+      ];
+      if (tryPlace(cells, "hall")) hallsPlaced++;
+    }
+
+    let corridorsPlaced = 0;
+    for (let attempts = 0; corridorsPlaced < CORRIDOR3_COUNT && attempts < 600; attempts++) {
+      const horizontal = rng() < 0.5;
+      let cells: { col: number; row: number }[];
+      if (horizontal) {
+        const col = Math.floor(rng() * (GRID_COLS - 2));
+        const row = Math.floor(rng() * GRID_ROWS);
+        cells = [
+          { col, row },
+          { col: col + 1, row },
+          { col: col + 2, row },
+        ];
+      } else {
+        const col = Math.floor(rng() * GRID_COLS);
+        const row = Math.floor(rng() * (GRID_ROWS - 2));
+        cells = [
+          { col, row },
+          { col, row: row + 1 },
+          { col, row: row + 2 },
+        ];
+      }
+      if (tryPlace(cells, "corridor3")) corridorsPlaced++;
+    }
+
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        if (cellToBlock[cellId(col, row)] === -1) {
+          tryPlace([{ col, row }], "single");
+        }
+      }
+    }
+
+    return { cellToBlock, blocks };
+  }
+
+  /** Randomized Prim's spanning tree over the block-adjacency graph, plus a few extra loop edges so routes aren't single-file. */
+  private buildMaze(rng: () => number, cellToBlock: number[], blockCount: number): CellEdge[] {
+    const cellId = (col: number, row: number) => row * GRID_COLS + col;
+    const candidateEdges: CellEdge[] = [];
+    const seenPairs = new Set<string>();
+
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const blockHere = cellToBlock[cellId(col, row)];
+
+        if (col < GRID_COLS - 1) {
+          const rightBlock = cellToBlock[cellId(col + 1, row)];
+          if (rightBlock !== blockHere) {
+            const key = `${Math.min(blockHere, rightBlock)}-${Math.max(blockHere, rightBlock)}`;
+            if (!seenPairs.has(key)) {
+              seenPairs.add(key);
+              candidateEdges.push({ blockA: blockHere, blockB: rightBlock, cellA: { col, row }, dir: "east" });
+            }
+          }
+        }
+
+        if (row < GRID_ROWS - 1) {
+          const downBlock = cellToBlock[cellId(col, row + 1)];
+          if (downBlock !== blockHere) {
+            const key = `${Math.min(blockHere, downBlock)}-${Math.max(blockHere, downBlock)}`;
+            if (!seenPairs.has(key)) {
+              seenPairs.add(key);
+              candidateEdges.push({ blockA: blockHere, blockB: downBlock, cellA: { col, row }, dir: "south" });
+            }
+          }
+        }
+      }
+    }
+
+    const edgesByBlock: CellEdge[][] = Array.from({ length: blockCount }, () => []);
+    for (const e of candidateEdges) {
+      edgesByBlock[e.blockA].push(e);
+      edgesByBlock[e.blockB].push(e);
+    }
+
+    const startBlock = cellToBlock[cellId(0, 0)];
+    const visited = new Uint8Array(blockCount);
+    const connected: CellEdge[] = [];
+    const frontier: CellEdge[] = [];
+
+    visited[startBlock] = 1;
+    frontier.push(...edgesByBlock[startBlock]);
 
     while (frontier.length > 0) {
       const idx = Math.floor(rng() * frontier.length);
       const edge = frontier.splice(idx, 1)[0];
-      const otherEnd = visited[edge.a] ? edge.b : edge.a;
+      const otherEnd = visited[edge.blockA] ? edge.blockB : edge.blockA;
       if (visited[otherEnd]) continue;
       visited[otherEnd] = 1;
       connected.push(edge);
-      frontier.push(...neighborsOf(otherEnd).filter((e) => !visited[visited[e.a] ? e.b : e.a]));
+      frontier.push(
+        ...edgesByBlock[otherEnd].filter((e) => !visited[visited[e.blockA] ? e.blockB : e.blockA])
+      );
     }
 
-    const connectedKeys = new Set(connected.map((e) => `${e.a},${e.b},${e.dir}`));
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const id = this.cellId(col, row);
-        if (col < GRID_COLS - 1) {
-          const key = `${id},${this.cellId(col + 1, row)},east`;
-          if (!connectedKeys.has(key) && rng() < EXTRA_EDGE_CHANCE) {
-            connected.push({ a: id, b: this.cellId(col + 1, row), dir: "east" });
-          }
-        }
-        if (row < GRID_ROWS - 1) {
-          const key = `${id},${this.cellId(col, row + 1)},south`;
-          if (!connectedKeys.has(key) && rng() < EXTRA_EDGE_CHANCE) {
-            connected.push({ a: id, b: this.cellId(col, row + 1), dir: "south" });
-          }
-        }
+    const connectedKeys = new Set(
+      connected.map((e) => `${Math.min(e.blockA, e.blockB)}-${Math.max(e.blockA, e.blockB)}`)
+    );
+    for (const e of candidateEdges) {
+      const key = `${Math.min(e.blockA, e.blockB)}-${Math.max(e.blockA, e.blockB)}`;
+      if (!connectedKeys.has(key) && rng() < EXTRA_EDGE_CHANCE) {
+        connected.push(e);
+        connectedKeys.add(key);
       }
     }
 
     return connected;
   }
 
-  private generateRooms(edges: Edge[], rng: () => number): void {
-    const totalCells = GRID_COLS * GRID_ROWS;
-    const degree = new Array(totalCells).fill(0);
+  private generateRooms(
+    blocks: Block[],
+    edges: CellEdge[],
+    reservedCellIds: Set<number>,
+    cellToBlock: number[]
+  ): void {
+    const degree = new Array(blocks.length).fill(0);
     for (const e of edges) {
-      degree[e.a]++;
-      degree[e.b]++;
+      degree[e.blockA]++;
+      degree[e.blockB]++;
     }
 
-    const hallCandidates = [...Array(totalCells).keys()]
-      .filter((id) => id !== 0 && id !== totalCells - 1 && degree[id] >= 3)
-      .sort(() => rng() - 0.5)
-      .slice(0, 3);
-    const hallSet = new Set(hallCandidates);
+    for (const block of blocks) {
+      const cols = block.cells.map((c) => c.col);
+      const rows = block.cells.map((c) => c.row);
+      const minCol = Math.min(...cols);
+      const maxCol = Math.max(...cols);
+      const minRow = Math.min(...rows);
+      const maxRow = Math.max(...rows);
+      const isHall = block.kind === "hall";
+      const pad = isHall ? HALL_PAD : WALL_PAD;
 
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const id = this.cellId(col, row);
-        const isHall = hallSet.has(id);
-        const pad = isHall ? 4 : WALL_PAD;
-        let flavor: RoomFlavor = "lab";
-        if (isHall) flavor = "hall";
-        else if (degree[id] === 2) flavor = "corridor";
+      let flavor: RoomFlavor = "lab";
+      if (isHall) flavor = "hall";
+      else if (block.kind === "corridor3") flavor = "corridor";
+      else if (degree[block.id] === 2) flavor = "corridor";
 
-        this.rooms.push({
-          id,
-          x: col * CELL_W + pad,
-          y: row * CELL_H + pad,
-          w: CELL_W - pad * 2,
-          h: CELL_H - pad * 2,
-          flavor,
-          doors: [],
-        });
-      }
+      this.rooms.push({
+        id: block.id,
+        x: minCol * CELL_W + pad,
+        y: minRow * CELL_H + pad,
+        w: (maxCol - minCol + 1) * CELL_W - pad * 2,
+        h: (maxRow - minRow + 1) * CELL_H - pad * 2,
+        flavor,
+        doors: [],
+      });
+    }
+
+    for (const reservedId of reservedCellIds) {
+      this.rooms[cellToBlock[reservedId]].flavor = "lab";
     }
 
     for (const edge of edges) {
-      const roomA = this.rooms[edge.a];
-      const roomB = this.rooms[edge.b];
+      const roomA = this.rooms[edge.blockA];
+      const roomB = this.rooms[edge.blockB];
 
       if (edge.dir === "east") {
-        const doorY = (roomA.y + roomA.h / 2 + (roomB.y + roomB.h / 2)) / 2;
+        const doorY = edge.cellA.row * CELL_H + CELL_H / 2;
         const gapStart = roomA.x + roomA.w;
         const gapEnd = roomB.x;
         this.connectors.push({ x: gapStart, y: doorY - DOOR_SIZE / 2, w: gapEnd - gapStart, h: DOOR_SIZE });
@@ -200,7 +314,7 @@ export class LabMap {
         roomB.doors.push({ x: gapEnd, y: doorY, targetRoomId: roomA.id, direction: "west" });
         this.doorways.push({ x: (gapStart + gapEnd) / 2, y: doorY, direction: "east" });
       } else {
-        const doorX = (roomA.x + roomA.w / 2 + (roomB.x + roomB.w / 2)) / 2;
+        const doorX = edge.cellA.col * CELL_W + CELL_W / 2;
         const gapStart = roomA.y + roomA.h;
         const gapEnd = roomB.y;
         this.connectors.push({ x: doorX - DOOR_SIZE / 2, y: gapStart, w: DOOR_SIZE, h: gapEnd - gapStart });
@@ -264,6 +378,19 @@ export class LabMap {
     }
 
     return false;
+  }
+
+  /** Samples along the segment so bots/arrows can't fight through walls between separate rooms. */
+  hasLineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    const steps = Math.max(1, Math.ceil(dist / 16));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const px = x1 + (x2 - x1) * t;
+      const py = y1 + (y2 - y1) * t;
+      if (!this.isFree(px, py, 1)) return false;
+    }
+    return true;
   }
 
   private nearestNode(x: number, y: number): number {
@@ -436,11 +563,13 @@ export class LabMap {
     }
 
     if (room.flavor === "hall") {
-      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, 70, 0xc9a227);
-      this.renderRug(g, room.x + room.w * 0.2, room.y + room.h * 0.2, 26, 0x3f6b8f);
-      this.renderRug(g, room.x + room.w * 0.8, room.y + room.h * 0.8, 26, 0x3f6b8f);
+      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, Math.min(room.w, room.h) * 0.24, 0xc9a227);
+      this.renderRug(g, room.x + room.w * 0.18, room.y + room.h * 0.18, 26, 0x3f6b8f);
+      this.renderRug(g, room.x + room.w * 0.82, room.y + room.h * 0.82, 26, 0x3f6b8f);
       this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + 16);
       this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + room.h - 44);
+      this.renderBookshelf(g, room.x + 14, room.y + room.h / 2 - 32, rng);
+      this.renderBookshelf(g, room.x + room.w - 56, room.y + room.h / 2 - 32, rng);
       return;
     }
 

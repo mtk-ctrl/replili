@@ -1,7 +1,6 @@
 import Phaser from "phaser";
 import { GAME_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId } from "../config";
 import { LabMap, type Door } from "../world/LabMap";
-import type { TownMap } from "../world/TownMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
 import { Character } from "../entities/Character";
@@ -14,7 +13,6 @@ interface TeamRoster {
 }
 
 export class MainScene extends Phaser.Scene {
-  private map!: TownMap;
   private labMap!: LabMap;
   private flags: Flag[] = [];
   private arrows: Arrow[] = [];
@@ -49,11 +47,10 @@ export class MainScene extends Phaser.Scene {
 
   create(): void {
     this.labMap = new LabMap();
-    this.map = this.labMap as unknown as TownMap;
     this.worldContainer = this.add.container(0, 0);
     this.labMap.render(this, this.worldContainer);
 
-    this.flags = this.map.flagSpawns.map((spawn) => {
+    this.flags = this.labMap.flagSpawns.map((spawn) => {
       const flag = new Flag(this, spawn.x, spawn.y);
       this.worldContainer.add(flag.gfx);
       return flag;
@@ -64,8 +61,8 @@ export class MainScene extends Phaser.Scene {
       blue: { human: null, bots: [] },
     };
 
-    const redSpawn = this.map.baseSpawns.red;
-    this.player = new Character(this, this.map, "red", redSpawn.x, redSpawn.y, true);
+    const redSpawn = this.labMap.baseSpawns.red;
+    this.player = new Character(this, this.labMap, "red", redSpawn.x, redSpawn.y, true);
     this.worldContainer.add(this.player.container);
     this.roster.red.human = this.player;
 
@@ -108,21 +105,21 @@ export class MainScene extends Phaser.Scene {
   }
 
   private spawnBot(team: TeamId, index: number): void {
-    const base = this.map.baseSpawns[team];
+    const base = this.labMap.baseSpawns[team];
     const angle = (index / GAME_CONFIG.PLAYERS_PER_TEAM) * Math.PI * 2;
     const x = base.x + Math.cos(angle) * 60;
     const y = base.y + Math.sin(angle) * 60;
-    const character = new Character(this, this.map, team, x, y, false);
+    const character = new Character(this, this.labMap, team, x, y, false);
     this.worldContainer.add(character.container);
-    const ai = new BotAI(character, this.map, this.flags, this.map.baseSpawns);
+    const ai = new BotAI(character, this.labMap, this.flags, this.labMap.baseSpawns);
     this.roster[team].bots.push({ character, ai });
   }
 
   private updateCameraContainer(): void {
     const halfViewW = this.scale.width / 2 / this.ZOOM;
     const halfViewH = this.scale.height / 2 / this.ZOOM;
-    const camX = Phaser.Math.Clamp(this.player.x, halfViewW, this.map.width - halfViewW);
-    const camY = Phaser.Math.Clamp(this.player.y, halfViewH, this.map.height - halfViewH);
+    const camX = Phaser.Math.Clamp(this.player.x, halfViewW, this.labMap.width - halfViewW);
+    const camY = Phaser.Math.Clamp(this.player.y, halfViewH, this.labMap.height - halfViewH);
     const offsetX = this.scale.width / 2 - camX * this.ZOOM;
     const offsetY = this.scale.height / 2 - camY * this.ZOOM;
     this.worldContainer.setPosition(offsetX, offsetY);
@@ -398,7 +395,7 @@ export class MainScene extends Phaser.Scene {
       if (!arrow.alive) continue;
       arrow.update(dt);
 
-      if (!this.map.isFree(arrow.x, arrow.y, 2)) {
+      if (!this.labMap.isFree(arrow.x, arrow.y, 2)) {
         arrow.alive = false;
         continue;
       }
@@ -429,7 +426,7 @@ export class MainScene extends Phaser.Scene {
   private updateRespawns(time: number): void {
     for (const c of this.allCharacters()) {
       if (!c.alive && time >= c.respawnAt) {
-        const base = this.map.baseSpawns[c.team];
+        const base = this.labMap.baseSpawns[c.team];
         c.respawn(base.x, base.y);
       }
     }

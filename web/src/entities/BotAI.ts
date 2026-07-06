@@ -1,7 +1,7 @@
 import { GAME_CONFIG, TeamId } from "../config";
 import type { Character } from "./Character";
 import type { Flag } from "./Flag";
-import type { TownMap } from "../world/TownMap";
+import type { LabMap } from "../world/LabMap";
 
 interface Point {
   x: number;
@@ -9,18 +9,31 @@ interface Point {
 }
 
 const REPATH_INTERVAL_MS = 1500;
-const AGGRO_RANGE = 480;
+const AGGRO_RANGE = 380;
 const SWORD_ENGAGE_RANGE = GAME_CONFIG.SWORD.RANGE - 6;
 const BOW_ENGAGE_RANGE = GAME_CONFIG.BOW.RANGE * 0.72;
+const FLEE_HP_RATIO = 0.3;
+const ENGAGE_CHANCE = 0.65;
+const DECISION_INTERVAL_MS = 2200;
+const RANDOM_TARGET_CHANCE = 0.3;
+const TARGET_REROLL_MIN_MS = 3000;
+const TARGET_REROLL_JITTER_MS = 3000;
+const TARGET_JITTER_RADIUS = 55;
 
-/** Simple decision loop for a bot: fight anything close, otherwise push toward the nearest contestable flag. */
+/** Decision loop for a bot: mostly pushes toward contestable flags, only fights what it can actually see, sometimes ignores a fight to stay on task, and backs off when hurt. */
 export class BotAI {
   private path: Point[] = [];
   private nextRepathAt = 0;
+  private targetFlag: Flag | null = null;
+  private nextTargetRerollAt = 0;
+  private targetJitterX = 0;
+  private targetJitterY = 0;
+  private nextEngageDecisionAt = 0;
+  private willEngageCurrentFight = true;
 
   constructor(
     private character: Character,
-    private map: TownMap,
+    private map: LabMap,
     private flags: Flag[],
     private baseSpawns: Record<TeamId, Point>
   ) {}
@@ -38,13 +51,25 @@ export class BotAI {
       return;
     }
 
-    const nearestEnemy = this.findNearestEnemy(enemies);
-    if (nearestEnemy && this.distanceTo(nearestEnemy) < AGGRO_RANGE) {
-      this.engage(now, nearestEnemy, fireBow, applySwordHit);
+    const visibleEnemy = this.findNearestVisibleEnemy(enemies);
+
+    if (visibleEnemy && self.hp / GAME_CONFIG.MAX_HEALTH <= FLEE_HP_RATIO) {
+      this.flee(now, visibleEnemy, fireBow);
       return;
     }
 
-    const target = this.pickTargetFlag() ?? this.baseSpawns[self.team];
+    if (visibleEnemy) {
+      if (now >= this.nextEngageDecisionAt) {
+        this.nextEngageDecisionAt = now + DECISION_INTERVAL_MS;
+        this.willEngageCurrentFight = Math.random() < ENGAGE_CHANCE;
+      }
+      if (this.willEngageCurrentFight) {
+        this.engage(now, visibleEnemy, fireBow, applySwordHit);
+        return;
+      }
+    }
+
+    const target = this.pickTargetFlag(now) ?? this.baseSpawns[self.team];
     this.moveToward(now, target.x, target.y);
   }
 
@@ -74,23 +99,40 @@ export class BotAI {
     }
   }
 
-  private pickTargetFlag(): Point | null {
+  private flee(now: number, enemy: Character, fireBow: (shooter: Character, angle: number) => void): void {
+    const self = this.character;
+    const dx = self.x - enemy.x;
+    const dy = self.y - enemy.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    self.moveDirX = dx / dist;
+    self.moveDirY = dy / dist;
+    self.facing = Math.atan2(enemy.y - self.y, enemy.x - self.x);
+
+    if (dist < BOW_ENGAGE_RANGE && self.fireBow(now)) fireBow(self, self.facing);
+  }
+
+  private pickTargetFlag(now: number): Point | null {
     const self = this.character;
 
     const neutral = this.flags.filter((f) => f.owner === null);
-    const enemy = this.flags.filter((f) => f.owner && f.owner !== self.team);
+    const enemyOwned = this.flags.filter((f) => f.owner && f.owner !== self.team);
     const ours = this.flags.filter((f) => f.owner === self.team);
+    const pool = neutral.length > 0 ? neutral : enemyOwned.length > 0 ? enemyOwned : ours;
+    if (pool.length === 0) return null;
 
-    let target = null;
-    if (neutral.length > 0) {
-      target = this.findClosestFlag(neutral);
-    } else if (enemy.length > 0) {
-      target = this.findClosestFlag(enemy);
-    } else if (ours.length > 0) {
-      target = this.findClosestFlag(ours);
+    const targetStillValid = this.targetFlag !== null && pool.includes(this.targetFlag);
+    if (!targetStillValid || now >= this.nextTargetRerollAt) {
+      this.nextTargetRerollAt = now + TARGET_REROLL_MIN_MS + Math.random() * TARGET_REROLL_JITTER_MS;
+      this.targetFlag =
+        pool.length > 1 && Math.random() < RANDOM_TARGET_CHANCE
+          ? pool[Math.floor(Math.random() * pool.length)]
+          : this.findClosestFlag(pool);
+      this.targetJitterX = (Math.random() * 2 - 1) * TARGET_JITTER_RADIUS;
+      this.targetJitterY = (Math.random() * 2 - 1) * TARGET_JITTER_RADIUS;
     }
 
-    return target ? { x: target.x, y: target.y } : null;
+    if (!this.targetFlag) return null;
+    return { x: this.targetFlag.x + this.targetJitterX, y: this.targetFlag.y + this.targetJitterY };
   }
 
   private findClosestFlag(flags: Flag[]): Flag | null {
@@ -127,16 +169,17 @@ export class BotAI {
     self.facing = Math.atan2(dy, dx);
   }
 
-  private findNearestEnemy(enemies: Character[]): Character | null {
+  /** Only counts enemies within range AND with a clear line of sight, so bots don't trade arrows through walls forever. */
+  private findNearestVisibleEnemy(enemies: Character[]): Character | null {
     let best: Character | null = null;
     let bestDist = Infinity;
     for (const e of enemies) {
       if (!e.alive) continue;
       const d = this.distanceTo(e);
-      if (d < bestDist) {
-        bestDist = d;
-        best = e;
-      }
+      if (d >= AGGRO_RANGE || d >= bestDist) continue;
+      if (!this.map.hasLineOfSight(this.character.x, this.character.y, e.x, e.y)) continue;
+      bestDist = d;
+      best = e;
     }
     return best;
   }

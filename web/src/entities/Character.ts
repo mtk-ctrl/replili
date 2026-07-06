@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
-import type { TownMap } from "../world/TownMap";
+import type { LabMap } from "../world/LabMap";
 
 export type WeaponType = "sword" | "bow";
 
@@ -27,12 +27,12 @@ export class Character {
   private bowReadyAt = 0;
 
   private scene: Phaser.Scene;
-  private map: TownMap;
+  private map: LabMap;
   readonly container: Phaser.GameObjects.Container;
   private facingGfx: Phaser.GameObjects.Rectangle;
   private hpBarFill: Phaser.GameObjects.Rectangle;
 
-  constructor(scene: Phaser.Scene, map: TownMap, team: TeamId, x: number, y: number, isHuman: boolean) {
+  constructor(scene: Phaser.Scene, map: LabMap, team: TeamId, x: number, y: number, isHuman: boolean) {
     this.scene = scene;
     this.map = map;
     this.team = team;
