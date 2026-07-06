@@ -76,20 +76,35 @@ export class BotAI {
 
   private pickTargetFlag(): Point | null {
     const self = this.character;
-    const notOwnedByUs = this.flags.filter((f) => f.owner !== self.team);
-    const pool = notOwnedByUs.length > 0 ? notOwnedByUs : this.flags;
-    if (pool.length === 0) return null;
 
-    let best: Flag = pool[0];
+    const neutral = this.flags.filter((f) => f.owner === null);
+    const enemy = this.flags.filter((f) => f.owner && f.owner !== self.team);
+    const ours = this.flags.filter((f) => f.owner === self.team);
+
+    let target = null;
+    if (neutral.length > 0) {
+      target = this.findClosestFlag(neutral);
+    } else if (enemy.length > 0) {
+      target = this.findClosestFlag(enemy);
+    } else if (ours.length > 0) {
+      target = this.findClosestFlag(ours);
+    }
+
+    return target ? { x: target.x, y: target.y } : null;
+  }
+
+  private findClosestFlag(flags: Flag[]): Flag | null {
+    if (flags.length === 0) return null;
+    let best: Flag = flags[0];
     let bestDist = Infinity;
-    for (const f of pool) {
+    for (const f of flags) {
       const d = this.distanceTo(f);
       if (d < bestDist) {
         bestDist = d;
         best = f;
       }
     }
-    return { x: best.x, y: best.y };
+    return best;
   }
 
   private moveToward(now: number, tx: number, ty: number): void {
