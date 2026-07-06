@@ -38,6 +38,8 @@ export class MainScene extends Phaser.Scene {
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
+  private scoreRedText!: Phaser.GameObjects.Text;
+  private scoreBlueText!: Phaser.GameObjects.Text;
   private resultText!: Phaser.GameObjects.Text;
   private fovLayer!: Phaser.GameObjects.Graphics;
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
@@ -47,7 +49,11 @@ export class MainScene extends Phaser.Scene {
   private nearbyTreasure: Treasure | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
   private minimap!: Minimap;
-  private readonly ZOOM = 2.2;
+  private readonly ZOOM = 1.47;
+  private previousFlagOwners: Map<Flag, string> = new Map();
+  private flagCaptureAnnouncementText: Phaser.GameObjects.Text | null = null;
+  private flagScaleAnimTargetTeam: TeamId | null = null;
+  private flagScaleAnimInProgress = false;
 
   constructor() {
     super("main");
@@ -62,7 +68,9 @@ export class MainScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.labMap = new LabMap();
+    const mapSeeds = [20260706, 20260707, 20260708, 20260709, 20260710];
+    const randomSeed = mapSeeds[Math.floor(Math.random() * mapSeeds.length)];
+    this.labMap = new LabMap(randomSeed);
     this.worldContainer = this.add.container(0, 0);
     this.labMap.render(this, this.worldContainer);
 
@@ -209,6 +217,18 @@ export class MainScene extends Phaser.Scene {
 
     this.scoreText = this.add
       .text(this.scale.width / 2, 50, "", { fontFamily: "monospace", fontSize: "14px", color: "#c9c2b2" })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(100);
+
+    this.scoreRedText = this.add
+      .text(this.scale.width / 2 - 70, 50, "", { fontFamily: "monospace", fontSize: "32px", color: "#c0392b", fontStyle: "bold" })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(100);
+
+    this.scoreBlueText = this.add
+      .text(this.scale.width / 2 + 70, 50, "", { fontFamily: "monospace", fontSize: "32px", color: "#2f7fb3", fontStyle: "bold" })
       .setOrigin(0.5, 0)
       .setScrollFactor(0)
       .setDepth(100);
@@ -386,13 +406,44 @@ export class MainScene extends Phaser.Scene {
   }
 
   private startGame(): void {
-    this.gameStarted = true;
     this.titleScreen.destroy();
-    const playerRoom = this.labMap.getRoomAt(this.player.x, this.player.y);
-    if (playerRoom) {
-      this.currentRoom = playerRoom.id;
-      this.visitedRooms.add(playerRoom.id);
-    }
+    this.showCountdown();
+  }
+
+  private showCountdown(): void {
+    const countdownText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, "3", {
+        fontFamily: "georgia, serif",
+        fontSize: "80px",
+        color: "#f2e9d8",
+        align: "center",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(210);
+
+    let count = 3;
+    const updateCountdown = () => {
+      count--;
+      if (count > 0) {
+        countdownText.setText(count.toString());
+        this.time.delayedCall(1000, updateCountdown);
+      } else {
+        countdownText.setText("START!");
+        this.time.delayedCall(800, () => {
+          countdownText.destroy();
+          this.gameStarted = true;
+          const playerRoom = this.labMap.getRoomAt(this.player.x, this.player.y);
+          if (playerRoom) {
+            this.currentRoom = playerRoom.id;
+            this.visitedRooms.add(playerRoom.id);
+          }
+        });
+      }
+    };
+
+    this.time.delayedCall(1000, updateCountdown);
   }
 
   private allCharacters(): Character[] {
@@ -628,8 +679,50 @@ export class MainScene extends Phaser.Scene {
         if (!c.alive) continue;
         if (Math.hypot(c.x - flag.x, c.y - flag.y) <= flag.radius) present[c.team] = true;
       }
+      const prevOwner = this.previousFlagOwners.get(flag);
       flag.update(dt, present);
+      const newOwner = flag.owner;
+      if (prevOwner !== newOwner && newOwner !== "neutral") {
+        this.announceFlagCapture(newOwner);
+      }
+      this.previousFlagOwners.set(flag, newOwner);
     }
+  }
+
+  private announceFlagCapture(team: TeamId): void {
+    if (this.flagCaptureAnnouncementText) {
+      this.flagCaptureAnnouncementText.destroy();
+    }
+
+    const teamName = team === "red" ? "赤" : "青";
+    this.flagCaptureAnnouncementText = this.add
+      .text(this.scale.width / 2, 90, `${teamName}チーム  旗奪取！`, {
+        fontFamily: "monospace",
+        fontSize: "32px",
+        color: `#${TEAM_COLOR[team].toString(16).padStart(6, "0")}`,
+        align: "center",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(180);
+
+    this.flagScaleAnimTargetTeam = team;
+
+    this.tweens.add({
+      targets: this.flagCaptureAnnouncementText,
+      alpha: { from: 1, to: 0 },
+      duration: 2000,
+      ease: "Cubic.easeOut",
+      onComplete: () => {
+        if (this.flagCaptureAnnouncementText) {
+          this.flagCaptureAnnouncementText.destroy();
+          this.flagCaptureAnnouncementText = null;
+        }
+        this.flagScaleAnimTargetTeam = null;
+        this.flagScaleAnimInProgress = false;
+      },
+    });
   }
 
   private updateHud(): void {
@@ -643,7 +736,32 @@ export class MainScene extends Phaser.Scene {
       },
       { red: 0, blue: 0 }
     );
-    this.scoreText.setText(`RED ${score.red}  —  BLUE ${score.blue}`);
+    this.scoreText.setText(`RED  —  BLUE`);
+    this.scoreRedText.setText(score.red.toString());
+    this.scoreBlueText.setText(score.blue.toString());
+
+    if (this.flagScaleAnimTargetTeam && !this.flagScaleAnimInProgress) {
+      this.flagScaleAnimInProgress = true;
+      const targetText = this.flagScaleAnimTargetTeam === "red" ? this.scoreRedText : this.scoreBlueText;
+      this.tweens.add({
+        targets: targetText,
+        scale: { from: 1, to: 1.4 },
+        duration: 300,
+        ease: "Cubic.easeOut",
+        onComplete: () => {
+          this.tweens.add({
+            targets: targetText,
+            scale: { from: 1.4, to: 1 },
+            duration: 700,
+            ease: "Cubic.easeOut",
+            delay: 300,
+            onComplete: () => {
+              this.flagScaleAnimInProgress = false;
+            },
+          });
+        },
+      });
+    }
 
     this.updateHotbar();
 

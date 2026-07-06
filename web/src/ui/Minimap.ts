@@ -66,7 +66,7 @@ export class Minimap {
     // Draw visible enemies (enemies the player can see)
     for (const enemy of enemies) {
       if (enemy.alive && this.isVisible(player, enemy)) {
-        this.drawCharacter(enemy, 0xff6b6b, 1.5);
+        this.drawCharacter(enemy, 0x3b82f6, 1.5);
       }
     }
   }
