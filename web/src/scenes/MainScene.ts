@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { GAME_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId } from "../config";
-import { TownMap } from "../world/TownMap";
+import { LabMap } from "../world/LabMap";
+import type { TownMap } from "../world/TownMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
 import { Character } from "../entities/Character";
@@ -14,6 +15,7 @@ interface TeamRoster {
 
 export class MainScene extends Phaser.Scene {
   private map!: TownMap;
+  private labMap!: LabMap;
   private flags: Flag[] = [];
   private arrows: Arrow[] = [];
   private roster!: Record<TeamId, TeamRoster>;
@@ -21,6 +23,8 @@ export class MainScene extends Phaser.Scene {
   private match!: MatchManager;
   private gameStarted = false;
   private titleScreen!: Phaser.GameObjects.Container;
+  private visitedRooms = new Set<number>();
+  private currentRoom: number | null = null;
 
   private keys!: {
     up: Phaser.Input.Keyboard.Key;
@@ -33,13 +37,15 @@ export class MainScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private resultText!: Phaser.GameObjects.Text;
   private weaponText!: Phaser.GameObjects.Text;
+  private fovLayer!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super("main");
   }
 
   create(): void {
-    this.map = new TownMap();
+    this.labMap = new LabMap();
+    this.map = this.labMap as unknown as TownMap;
     this.map.render(this);
     this.cameras.main.setBounds(0, 0, this.map.width, this.map.height);
 
@@ -70,6 +76,12 @@ export class MainScene extends Phaser.Scene {
 
     const dt = delta / 1000;
 
+    const playerRoom = this.labMap.getRoomAt(this.player.x, this.player.y);
+    if (playerRoom && playerRoom.id !== this.currentRoom) {
+      this.currentRoom = playerRoom.id;
+      this.visitedRooms.add(playerRoom.id);
+    }
+
     if (!this.match.isOver) {
       this.updatePlayerMovementAndFacing();
       this.updateBots(time);
@@ -82,6 +94,7 @@ export class MainScene extends Phaser.Scene {
 
     this.match.tick(delta, this.flags);
     this.updateHud();
+    this.applyFOVCulling();
   }
 
   private spawnBot(team: TeamId, index: number): void {
@@ -105,6 +118,8 @@ export class MainScene extends Phaser.Scene {
 
     keyboard.addKey("1").on("down", () => this.player.switchWeapon("sword"));
     keyboard.addKey("2").on("down", () => this.player.switchWeapon("bow"));
+
+    keyboard.addKey("E").on("down", () => this.tryEnterDoor());
 
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
@@ -151,6 +166,9 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(200)
       .setVisible(false);
+
+    this.fovLayer = this.add.graphics();
+    this.fovLayer.setDepth(99);
   }
 
   private showTitleScreen(): void {
@@ -192,6 +210,19 @@ export class MainScene extends Phaser.Scene {
   private startGame(): void {
     this.gameStarted = true;
     this.titleScreen.destroy();
+    const playerRoom = this.labMap.getRoomAt(this.player.x, this.player.y);
+    if (playerRoom) {
+      this.currentRoom = playerRoom.id;
+      this.visitedRooms.add(playerRoom.id);
+    }
+  }
+
+  private tryEnterDoor(): void {
+    if (!this.gameStarted || this.match.isOver) return;
+    const door = this.labMap.getDoorAt(this.player.x, this.player.y, 40);
+    if (door) {
+      this.visitedRooms.add(door.targetRoomId);
+    }
   }
 
   private allCharacters(): Character[] {
@@ -337,5 +368,18 @@ export class MainScene extends Phaser.Scene {
       this.resultText.setColor(`#${TEAM_COLOR[winner].toString(16).padStart(6, "0")}`);
       this.resultText.setVisible(true);
     }
+  }
+
+  private applyFOVCulling(): void {
+    this.fovLayer.clear();
+
+    for (const room of this.labMap.rooms) {
+      if (!this.visitedRooms.has(room.id)) {
+        this.fovLayer.fillStyle(0x000000, 0.85);
+        this.fovLayer.fillRect(room.x, room.y, room.w, room.h);
+      }
+    }
+
+    this.fovLayer.setScrollFactor(1, 1);
   }
 }
