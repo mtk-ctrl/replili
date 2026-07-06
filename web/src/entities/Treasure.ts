@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 
+const SPRITE_SCALE = 2.75; // native tiles are 16x16 pixel art
+
 /** A glowing, obviously-a-treasure-chest pickup. Only the human player can open it (see MainScene). */
 export class Treasure {
   x: number;
@@ -13,8 +15,8 @@ export class Treasure {
   private glowTween: Phaser.Tweens.Tween;
   private sparkle: Phaser.GameObjects.Text;
   private sparkleTween: Phaser.Tweens.Tween;
-  private base: Phaser.GameObjects.Rectangle;
-  private lid: Phaser.GameObjects.Rectangle;
+  private closedSprite: Phaser.GameObjects.Image;
+  private openSprite: Phaser.GameObjects.Image;
   private indicator: Phaser.GameObjects.Text;
   private indicatorTween: Phaser.Tweens.Tween | null = null;
   private indicatorVisible = false;
@@ -24,15 +26,12 @@ export class Treasure {
     this.x = x;
     this.y = y;
 
-    this.glow = scene.add.circle(0, 4, 30, 0xffd94a, 0.4);
+    this.glow = scene.add.circle(0, 2, 26, 0xffd94a, 0.4);
 
-    this.base = scene.add.rectangle(0, 8, 34, 18, 0x8a5a2b).setStrokeStyle(2, 0x4a3418, 1);
-    const baseBand = scene.add.rectangle(0, 8, 6, 18, 0xffd700);
+    this.closedSprite = scene.add.image(0, 0, "chest-closed").setScale(SPRITE_SCALE);
+    this.openSprite = scene.add.image(0, 0, "chest-open").setScale(SPRITE_SCALE).setVisible(false);
 
-    this.lid = scene.add.rectangle(0, -6, 36, 16, 0xc9922f).setStrokeStyle(2, 0x4a3418, 1);
-    const lidBand = scene.add.rectangle(0, -6, 6, 16, 0xffd700);
-
-    this.sparkle = scene.add.text(0, -24, "✨", { fontSize: "16px" }).setOrigin(0.5);
+    this.sparkle = scene.add.text(0, -26, "✨", { fontSize: "16px" }).setOrigin(0.5);
 
     this.indicator = scene.add
       .text(0, -46, "🔻", { fontSize: "24px" })
@@ -41,10 +40,8 @@ export class Treasure {
 
     this.container = scene.add.container(x, y, [
       this.glow,
-      this.base,
-      baseBand,
-      this.lid,
-      lidBand,
+      this.closedSprite,
+      this.openSprite,
       this.sparkle,
       this.indicator,
     ]);
@@ -62,7 +59,7 @@ export class Treasure {
 
     this.sparkleTween = scene.tweens.add({
       targets: this.sparkle,
-      y: { from: -24, to: -30 },
+      y: { from: -26, to: -32 },
       duration: 900,
       yoyo: true,
       repeat: -1,
@@ -102,26 +99,18 @@ export class Treasure {
     this.glowTween.stop();
     this.sparkleTween.stop();
     this.sparkle.setVisible(false);
-
     this.scene.tweens.add({ targets: this.glow, alpha: 0, duration: 250 });
 
-    this.base.setFillStyle(0x5a5347);
-    this.lid.setFillStyle(0x726a58);
-
-    this.scene.tweens.add({
-      targets: this.lid,
-      y: -18,
-      angle: -35,
-      duration: 220,
-      ease: "Back.easeOut",
-    });
+    this.closedSprite.setVisible(false);
+    this.openSprite.setVisible(true);
 
     this.scene.tweens.add({
       targets: this.container,
-      scaleX: { from: 1, to: 1.18 },
-      scaleY: { from: 1, to: 1.18 },
-      duration: 130,
+      scaleX: { from: 1, to: 1.25 },
+      scaleY: { from: 1, to: 1.25 },
+      duration: 140,
       yoyo: true,
+      ease: "Back.easeOut",
     });
 
     return Math.random() < 0.3;

@@ -7,5 +7,6 @@ new Phaser.Game({
   width: 960,
   height: 640,
   backgroundColor: "#0c1118",
+  pixelArt: true,
   scene: [MainScene],
 });

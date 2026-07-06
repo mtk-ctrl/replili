@@ -41,7 +41,7 @@ export class MainScene extends Phaser.Scene {
   private resultText!: Phaser.GameObjects.Text;
   private fovLayer!: Phaser.GameObjects.Graphics;
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
-  private grenadeSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [];
+  private grenadeSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
   private grenadeCountText!: Phaser.GameObjects.Text;
   private treasurePromptText!: Phaser.GameObjects.Text;
   private nearbyTreasure: Treasure | null = null;
@@ -51,6 +51,12 @@ export class MainScene extends Phaser.Scene {
 
   constructor() {
     super("main");
+  }
+
+  preload(): void {
+    this.load.image("chest-closed", "assets/tiny-dungeon/chest_closed.png");
+    this.load.image("chest-open", "assets/tiny-dungeon/chest_open.png");
+    this.load.image("sword-icon", "assets/tiny-dungeon/sword.png");
   }
 
   create(): void {
@@ -257,11 +263,14 @@ export class MainScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(150);
 
-      const icon = this.add
-        .text(x, y - 8, def.icon, { fontSize: "24px" })
-        .setOrigin(0.5)
-        .setScrollFactor(0)
-        .setDepth(151);
+      const icon =
+        i === 0
+          ? this.add.image(x, y - 8, "sword-icon").setScale(2.3).setScrollFactor(0).setDepth(151)
+          : this.add
+              .text(x, y - 8, def.icon, { fontSize: "24px" })
+              .setOrigin(0.5)
+              .setScrollFactor(0)
+              .setDepth(151);
 
       const label = this.add
         .text(x, y + slotSize / 2 + 10, `${def.key} ${def.label}`, {
