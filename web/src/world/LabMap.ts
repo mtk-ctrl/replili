@@ -13,12 +13,14 @@ interface Point {
   y: number;
 }
 
-interface Door {
+export interface Door {
   x: number;
   y: number;
   targetRoomId: number;
   direction: "north" | "south" | "east" | "west";
 }
+
+type RoomFlavor = "lab" | "hall" | "corridor";
 
 export interface Room {
   id: number;
@@ -26,110 +28,186 @@ export interface Room {
   y: number;
   w: number;
   h: number;
+  flavor: RoomFlavor;
   doors: Door[];
 }
 
-const ROOM_WIDTH = 320;
-const ROOM_HEIGHT = 240;
-const DOOR_SIZE = 40;
+const GRID_COLS = 5;
+const GRID_ROWS = 5;
+const CELL_W = 320;
+const CELL_H = 240;
+const WALL_PAD = 12;
+const DOOR_SIZE = 52;
+const EXTRA_EDGE_CHANCE = 0.22;
+
+function mulberry32(seed: number) {
+  return function random() {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+interface Edge {
+  a: number;
+  b: number;
+  dir: "east" | "south";
+}
 
 export class LabMap {
-  readonly width = ROOM_WIDTH * 3;
-  readonly height = ROOM_HEIGHT * 3;
-  readonly buildings: Rect[] = [];
+  readonly width = GRID_COLS * CELL_W;
+  readonly height = GRID_ROWS * CELL_H;
   readonly flagSpawns: Point[] = [];
   readonly baseSpawns: Record<TeamId, Point>;
   rooms: Room[] = [];
 
+  private connectors: Rect[] = [];
+  private doorways: { x: number; y: number; direction: Door["direction"] }[] = [];
   private nodePos: Point[] = [];
   private adjacency: number[][] = [];
 
-  constructor() {
-    this.generateRooms();
+  constructor(seed = 20260706) {
+    const rng = mulberry32(seed);
+    const edges = this.buildMaze(rng);
+    this.generateRooms(edges, rng);
     this.setupPathfinding();
 
     this.baseSpawns = {
       red: { x: this.rooms[0].x + this.rooms[0].w / 2, y: this.rooms[0].y + this.rooms[0].h / 2 },
-      blue: { x: this.rooms[8].x + this.rooms[8].w / 2, y: this.rooms[8].y + this.rooms[8].h / 2 },
+      blue: {
+        x: this.rooms[this.rooms.length - 1].x + this.rooms[this.rooms.length - 1].w / 2,
+        y: this.rooms[this.rooms.length - 1].y + this.rooms[this.rooms.length - 1].h / 2,
+      },
     };
 
-    this.flagSpawns = [
-      { x: this.rooms[1].x + this.rooms[1].w / 2, y: this.rooms[1].y + this.rooms[1].h / 2 },
-      { x: this.rooms[4].x + this.rooms[4].w / 2, y: this.rooms[4].y + this.rooms[4].h / 2 },
-      { x: this.rooms[7].x + this.rooms[7].w / 2, y: this.rooms[7].y + this.rooms[7].h / 2 },
+    const centerCol = Math.floor(GRID_COLS / 2);
+    const centerRow = Math.floor(GRID_ROWS / 2);
+    const flagCells = [
+      { col: GRID_COLS - 1, row: 0 },
+      { col: centerCol, row: centerRow },
+      { col: 0, row: GRID_ROWS - 1 },
     ];
+    for (const cell of flagCells) {
+      const room = this.rooms[cell.row * GRID_COLS + cell.col];
+      this.flagSpawns.push({ x: room.x + room.w / 2, y: room.y + room.h / 2 });
+    }
   }
 
-  private generateRooms(): void {
-    const roomGrid: Room[] = [];
+  private cellId(col: number, row: number): number {
+    return row * GRID_COLS + col;
+  }
 
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 3; col++) {
-        const id = row * 3 + col;
-        const room: Room = {
+  /** Randomized Prim's algorithm spanning tree over the grid, plus a few extra loop edges so routes aren't single-file. */
+  private buildMaze(rng: () => number): Edge[] {
+    const totalCells = GRID_COLS * GRID_ROWS;
+    const visited = new Uint8Array(totalCells);
+    const connected: Edge[] = [];
+    const frontier: Edge[] = [];
+
+    const neighborsOf = (id: number): Edge[] => {
+      const col = id % GRID_COLS;
+      const row = Math.floor(id / GRID_COLS);
+      const list: Edge[] = [];
+      if (col < GRID_COLS - 1) list.push({ a: id, b: this.cellId(col + 1, row), dir: "east" });
+      if (row < GRID_ROWS - 1) list.push({ a: id, b: this.cellId(col, row + 1), dir: "south" });
+      if (col > 0) list.push({ a: this.cellId(col - 1, row), b: id, dir: "east" });
+      if (row > 0) list.push({ a: this.cellId(col, row - 1), b: id, dir: "south" });
+      return list;
+    };
+
+    visited[0] = 1;
+    frontier.push(...neighborsOf(0));
+
+    while (frontier.length > 0) {
+      const idx = Math.floor(rng() * frontier.length);
+      const edge = frontier.splice(idx, 1)[0];
+      const otherEnd = visited[edge.a] ? edge.b : edge.a;
+      if (visited[otherEnd]) continue;
+      visited[otherEnd] = 1;
+      connected.push(edge);
+      frontier.push(...neighborsOf(otherEnd).filter((e) => !visited[visited[e.a] ? e.b : e.a]));
+    }
+
+    const connectedKeys = new Set(connected.map((e) => `${e.a},${e.b},${e.dir}`));
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const id = this.cellId(col, row);
+        if (col < GRID_COLS - 1) {
+          const key = `${id},${this.cellId(col + 1, row)},east`;
+          if (!connectedKeys.has(key) && rng() < EXTRA_EDGE_CHANCE) {
+            connected.push({ a: id, b: this.cellId(col + 1, row), dir: "east" });
+          }
+        }
+        if (row < GRID_ROWS - 1) {
+          const key = `${id},${this.cellId(col, row + 1)},south`;
+          if (!connectedKeys.has(key) && rng() < EXTRA_EDGE_CHANCE) {
+            connected.push({ a: id, b: this.cellId(col, row + 1), dir: "south" });
+          }
+        }
+      }
+    }
+
+    return connected;
+  }
+
+  private generateRooms(edges: Edge[], rng: () => number): void {
+    const totalCells = GRID_COLS * GRID_ROWS;
+    const degree = new Array(totalCells).fill(0);
+    for (const e of edges) {
+      degree[e.a]++;
+      degree[e.b]++;
+    }
+
+    const hallCandidates = [...Array(totalCells).keys()]
+      .filter((id) => id !== 0 && id !== totalCells - 1 && degree[id] >= 3)
+      .sort(() => rng() - 0.5)
+      .slice(0, 3);
+    const hallSet = new Set(hallCandidates);
+
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLS; col++) {
+        const id = this.cellId(col, row);
+        const isHall = hallSet.has(id);
+        const pad = isHall ? 4 : WALL_PAD;
+        let flavor: RoomFlavor = "lab";
+        if (isHall) flavor = "hall";
+        else if (degree[id] === 2) flavor = "corridor";
+
+        this.rooms.push({
           id,
-          x: col * ROOM_WIDTH,
-          y: row * ROOM_HEIGHT,
-          w: ROOM_WIDTH,
-          h: ROOM_HEIGHT,
+          x: col * CELL_W + pad,
+          y: row * CELL_H + pad,
+          w: CELL_W - pad * 2,
+          h: CELL_H - pad * 2,
+          flavor,
           doors: [],
-        };
-        roomGrid.push(room);
-
-        room.x = col * ROOM_WIDTH + 10;
-        room.y = row * ROOM_HEIGHT + 10;
-        room.w = ROOM_WIDTH - 20;
-        room.h = ROOM_HEIGHT - 20;
-      }
-    }
-
-    for (let i = 0; i < roomGrid.length; i++) {
-      const room = roomGrid[i];
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-
-      if (col < 2) {
-        const rightRoom = roomGrid[i + 1];
-        room.doors.push({
-          x: room.x + room.w - DOOR_SIZE / 2,
-          y: room.y + room.h / 2,
-          targetRoomId: rightRoom.id,
-          direction: "east",
-        });
-        rightRoom.doors.push({
-          x: rightRoom.x + DOOR_SIZE / 2,
-          y: rightRoom.y + rightRoom.h / 2,
-          targetRoomId: room.id,
-          direction: "west",
-        });
-      }
-
-      if (row < 2) {
-        const bottomRoom = roomGrid[i + 3];
-        room.doors.push({
-          x: room.x + room.w / 2,
-          y: room.y + room.h - DOOR_SIZE / 2,
-          targetRoomId: bottomRoom.id,
-          direction: "south",
-        });
-        bottomRoom.doors.push({
-          x: bottomRoom.x + bottomRoom.w / 2,
-          y: bottomRoom.y + DOOR_SIZE / 2,
-          targetRoomId: room.id,
-          direction: "north",
         });
       }
     }
 
-    this.rooms = roomGrid;
+    for (const edge of edges) {
+      const roomA = this.rooms[edge.a];
+      const roomB = this.rooms[edge.b];
 
-    for (const room of this.rooms) {
-      this.buildings.push({
-        x: room.x,
-        y: room.y,
-        w: room.w,
-        h: room.h,
-      });
+      if (edge.dir === "east") {
+        const doorY = (roomA.y + roomA.h / 2 + (roomB.y + roomB.h / 2)) / 2;
+        const gapStart = roomA.x + roomA.w;
+        const gapEnd = roomB.x;
+        this.connectors.push({ x: gapStart, y: doorY - DOOR_SIZE / 2, w: gapEnd - gapStart, h: DOOR_SIZE });
+        roomA.doors.push({ x: gapStart, y: doorY, targetRoomId: roomB.id, direction: "east" });
+        roomB.doors.push({ x: gapEnd, y: doorY, targetRoomId: roomA.id, direction: "west" });
+        this.doorways.push({ x: (gapStart + gapEnd) / 2, y: doorY, direction: "east" });
+      } else {
+        const doorX = (roomA.x + roomA.w / 2 + (roomB.x + roomB.w / 2)) / 2;
+        const gapStart = roomA.y + roomA.h;
+        const gapEnd = roomB.y;
+        this.connectors.push({ x: doorX - DOOR_SIZE / 2, y: gapStart, w: DOOR_SIZE, h: gapEnd - gapStart });
+        roomA.doors.push({ x: doorX, y: gapStart, targetRoomId: roomB.id, direction: "south" });
+        roomB.doors.push({ x: doorX, y: gapEnd, targetRoomId: roomA.id, direction: "north" });
+        this.doorways.push({ x: doorX, y: (gapStart + gapEnd) / 2, direction: "south" });
+      }
     }
   }
 
@@ -157,6 +235,7 @@ export class LabMap {
     return null;
   }
 
+  /** Nearby door for the "peek next room" prompt — only searches the room the caller is standing in. */
   getDoorAt(x: number, y: number, radius: number): Door | null {
     const currentRoom = this.getRoomAt(x, y);
     if (!currentRoom) return null;
@@ -178,10 +257,13 @@ export class LabMap {
       return false;
     }
 
-    const currentRoom = this.getRoomAt(x, y);
-    if (!currentRoom) return false;
+    if (this.getRoomAt(x, y)) return true;
 
-    return true;
+    for (const c of this.connectors) {
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) return true;
+    }
+
+    return false;
   }
 
   private nearestNode(x: number, y: number): number {
@@ -236,7 +318,8 @@ export class LabMap {
         const w = Math.min(TILE, room.x + room.w - tx);
         const h = Math.min(TILE, room.y + room.h - ty);
         const checker = (Math.round((tx - room.x) / TILE) + Math.round((ty - room.y) / TILE)) % 2 === 0;
-        g.fillStyle(checker ? 0x3d3d3d : 0x363636, 1);
+        const base = room.flavor === "hall" ? [0x3f3a2e, 0x38341f] : [0x3d3d3d, 0x363636];
+        g.fillStyle(checker ? base[0] : base[1], 1);
         g.fillRect(tx, ty, w, h);
       }
     }
@@ -261,7 +344,7 @@ export class LabMap {
     g.fillEllipse(x + w / 2 + 4, y + h + 3, w * 0.9, 10);
   }
 
-  private renderBookshelf(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  private renderBookshelf(g: Phaser.GameObjects.Graphics, x: number, y: number, rng: () => number): void {
     const w = 42;
     const h = 64;
     this.renderShadow(g, x, y, w, h);
@@ -284,8 +367,8 @@ export class LabMap {
 
       let bx = x + 4;
       while (bx < x + w - 6) {
-        const bookW = 4 + Math.random() * 3;
-        g.fillStyle(bookColors[Math.floor(Math.random() * bookColors.length)], 1);
+        const bookW = 4 + rng() * 3;
+        g.fillStyle(bookColors[Math.floor(rng() * bookColors.length)], 1);
         g.fillRect(bx, shelfY, Math.min(bookW, x + w - 4 - bx), shelfH);
         bx += bookW + 1;
       }
@@ -315,7 +398,7 @@ export class LabMap {
     g.fillCircle(x + w * 0.65 - 1.5, y + h * 0.5 - 1.5, 1.5);
   }
 
-  private renderServerRack(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+  private renderServerRack(g: Phaser.GameObjects.Graphics, x: number, y: number, rng: () => number): void {
     const w = 34;
     const h = 60;
     this.renderShadow(g, x, y, w, h);
@@ -333,7 +416,7 @@ export class LabMap {
       g.moveTo(x + 3, ly + 5);
       g.lineTo(x + w - 3, ly + 5);
       g.strokePath();
-      g.fillStyle(lightColors[Math.floor(Math.random() * lightColors.length)], 0.9);
+      g.fillStyle(lightColors[Math.floor(rng() * lightColors.length)], 0.9);
       g.fillCircle(x + w - 7, ly + 2, 1.6);
     }
   }
@@ -347,7 +430,29 @@ export class LabMap {
     g.strokeEllipse(cx, cy, r * 2, r * 1.5);
   }
 
+  private renderRoomFurniture(g: Phaser.GameObjects.Graphics, room: Room, rng: () => number): void {
+    if (room.flavor === "corridor") {
+      return;
+    }
+
+    if (room.flavor === "hall") {
+      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, 70, 0xc9a227);
+      this.renderRug(g, room.x + room.w * 0.2, room.y + room.h * 0.2, 26, 0x3f6b8f);
+      this.renderRug(g, room.x + room.w * 0.8, room.y + room.h * 0.8, 26, 0x3f6b8f);
+      this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + 16);
+      this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + room.h - 44);
+      return;
+    }
+
+    this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, 46, 0x3f6b8f);
+    this.renderBookshelf(g, room.x + 14, room.y + 12, rng);
+    this.renderBookshelf(g, room.x + room.w - 56, room.y + 12, rng);
+    this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + room.h - 44);
+    this.renderServerRack(g, room.x + room.w - 46, room.y + room.h - 72, rng);
+  }
+
   render(scene: Phaser.Scene, container?: Phaser.GameObjects.Container): Phaser.GameObjects.Graphics {
+    const rng = mulberry32(777);
     const g = scene.add.graphics();
     g.fillStyle(0x1c1e22, 1);
     g.fillRect(0, 0, this.width, this.height);
@@ -362,45 +467,43 @@ export class LabMap {
       g.lineStyle(3, 0x50565e, 1);
       g.strokeRect(room.x, room.y, room.w, room.h);
 
-      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, 46, 0x3f6b8f);
-      this.renderBookshelf(g, room.x + 14, room.y + 12);
-      this.renderBookshelf(g, room.x + room.w - 56, room.y + 12);
-      this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + room.h - 44);
-      this.renderServerRack(g, room.x + room.w - 46, room.y + room.h - 72);
+      this.renderRoomFurniture(g, room, rng);
     }
 
-    for (const room of this.rooms) {
-      for (const door of room.doors) {
-        const isHorizontal = door.direction === "east" || door.direction === "west";
-        const dw = isHorizontal ? 14 : DOOR_SIZE;
-        const dh = isHorizontal ? DOOR_SIZE : 14;
+    for (const doorway of this.doorways) {
+      const isHorizontal = doorway.direction === "east";
+      const dw = isHorizontal ? 14 : DOOR_SIZE;
+      const dh = isHorizontal ? DOOR_SIZE : 14;
 
-        g.fillStyle(0x4a3826, 1);
-        g.fillRect(door.x - dw / 2 - 3, door.y - dh / 2 - 3, dw + 6, dh + 6);
+      g.fillStyle(0x4a3826, 1);
+      g.fillRect(doorway.x - dw / 2 - 3, doorway.y - dh / 2 - 3, dw + 6, dh + 6);
 
-        g.fillStyle(0x8b6a45, 1);
-        g.fillRect(door.x - dw / 2, door.y - dh / 2, dw, dh);
-        const plankSpacing = isHorizontal ? 4 : 10;
-        g.lineStyle(1, 0x6b4f30, 0.8);
-        if (isHorizontal) {
-          for (let py = door.y - dh / 2 + plankSpacing; py < door.y + dh / 2; py += plankSpacing) {
-            g.beginPath();
-            g.moveTo(door.x - dw / 2, py);
-            g.lineTo(door.x + dw / 2, py);
-            g.strokePath();
-          }
-        } else {
-          for (let px = door.x - dw / 2 + plankSpacing; px < door.x + dw / 2; px += plankSpacing) {
-            g.beginPath();
-            g.moveTo(px, door.y - dh / 2);
-            g.lineTo(px, door.y + dh / 2);
-            g.strokePath();
-          }
+      g.fillStyle(0x8b6a45, 1);
+      g.fillRect(doorway.x - dw / 2, doorway.y - dh / 2, dw, dh);
+      const plankSpacing = isHorizontal ? 4 : 10;
+      g.lineStyle(1, 0x6b4f30, 0.8);
+      if (isHorizontal) {
+        for (let py = doorway.y - dh / 2 + plankSpacing; py < doorway.y + dh / 2; py += plankSpacing) {
+          g.beginPath();
+          g.moveTo(doorway.x - dw / 2, py);
+          g.lineTo(doorway.x + dw / 2, py);
+          g.strokePath();
         }
-
-        g.fillStyle(0xd4af37, 1);
-        g.fillCircle(door.x + (isHorizontal ? dw / 2 - 3 : 0), door.y + (isHorizontal ? 0 : dh / 2 - 3), 2.2);
+      } else {
+        for (let px = doorway.x - dw / 2 + plankSpacing; px < doorway.x + dw / 2; px += plankSpacing) {
+          g.beginPath();
+          g.moveTo(px, doorway.y - dh / 2);
+          g.lineTo(px, doorway.y + dh / 2);
+          g.strokePath();
+        }
       }
+
+      g.fillStyle(0xd4af37, 1);
+      g.fillCircle(
+        doorway.x + (isHorizontal ? dw / 2 - 3 : 0),
+        doorway.y + (isHorizontal ? 0 : dh / 2 - 3),
+        2.2
+      );
     }
 
     for (const spawn of this.flagSpawns) {

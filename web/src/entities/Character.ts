@@ -76,12 +76,6 @@ export class Character {
     this.weapon = weapon;
   }
 
-  teleportTo(x: number, y: number): void {
-    this.x = x;
-    this.y = y;
-    this.container.setPosition(x, y);
-  }
-
   applyDamage(amount: number, fromX: number, fromY: number): void {
     if (!this.alive) return;
     this.hp -= amount;

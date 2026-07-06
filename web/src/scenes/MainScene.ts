@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { GAME_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId } from "../config";
-import { LabMap } from "../world/LabMap";
+import { LabMap, type Door } from "../world/LabMap";
 import type { TownMap } from "../world/TownMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
@@ -36,10 +36,10 @@ export class MainScene extends Phaser.Scene {
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private resultText!: Phaser.GameObjects.Text;
-  private weaponText!: Phaser.GameObjects.Text;
   private fovLayer!: Phaser.GameObjects.Graphics;
+  private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
   private doorPromptText!: Phaser.GameObjects.Text;
-  private nearbyDoor: any | null = null;
+  private nearbyDoor: Door | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
   private readonly ZOOM = 2.2;
 
@@ -138,8 +138,8 @@ export class MainScene extends Phaser.Scene {
       right: keyboard.addKey("D"),
     };
 
-    keyboard.addKey("1").on("down", () => this.player.switchWeapon("sword"));
-    keyboard.addKey("2").on("down", () => this.player.switchWeapon("bow"));
+    keyboard.addKey("ONE").on("down", () => this.player.switchWeapon("sword"));
+    keyboard.addKey("TWO").on("down", () => this.player.switchWeapon("bow"));
 
     keyboard.addKey("E").on("down", () => this.tryEnterDoor());
 
@@ -171,11 +171,7 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(100);
 
-    this.weaponText = this.add
-      .text(20, 20, "", { fontFamily: "monospace", fontSize: "14px", color: "#c9c2b2" })
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(100);
+    this.setupHotbar();
 
     this.resultText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, "", {
@@ -194,7 +190,7 @@ export class MainScene extends Phaser.Scene {
     this.worldContainer.add(this.fovLayer);
 
     this.doorPromptText = this.add
-      .text(this.scale.width / 2, this.scale.height - 40, "", {
+      .text(this.scale.width / 2, this.scale.height - 90, "", {
         fontFamily: "monospace",
         fontSize: "14px",
         color: "#ffd700",
@@ -205,6 +201,59 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(100)
       .setVisible(false);
+  }
+
+  private setupHotbar(): void {
+    const slotSize = 56;
+    const gap = 8;
+    const totalWidth = slotSize * 2 + gap;
+    const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
+    const y = this.scale.height - 46;
+
+    const defs = [
+      { icon: "🗡️", key: "1", label: "SWORD" },
+      { icon: "🏹", key: "2", label: "BOW" },
+    ];
+
+    defs.forEach((def, i) => {
+      const x = startX + i * (slotSize + gap);
+      const bg = this.add
+        .rectangle(x, y, slotSize, slotSize, 0x1b1f27, 0.85)
+        .setStrokeStyle(3, 0x555555, 1)
+        .setScrollFactor(0)
+        .setDepth(150);
+
+      this.add
+        .text(x, y - 8, def.icon, { fontSize: "24px" })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(151);
+
+      this.add
+        .text(x, y + slotSize / 2 + 10, `${def.key} ${def.label}`, {
+          fontFamily: "monospace",
+          fontSize: "10px",
+          color: "#c9c2b2",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(151);
+
+      this.hotbarSlots.push(bg);
+    });
+  }
+
+  private updateHotbar(): void {
+    const activeIndex = this.player.weapon === "sword" ? 0 : 1;
+    this.hotbarSlots.forEach((slot, i) => {
+      if (i === activeIndex) {
+        slot.setStrokeStyle(3, 0xffd700, 1);
+        slot.setFillStyle(0x3a3a2a, 0.95);
+      } else {
+        slot.setStrokeStyle(3, 0x555555, 1);
+        slot.setFillStyle(0x1b1f27, 0.85);
+      }
+    });
   }
 
   private showTitleScreen(): void {
@@ -224,7 +273,7 @@ export class MainScene extends Phaser.Scene {
       .setDepth(201);
 
     const subtitleText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 15, "3×3 Lab • Red vs Blue", {
+      .text(this.scale.width / 2, this.scale.height / 2 - 15, "Sprawling Lab • Red vs Blue", {
         fontFamily: "monospace",
         fontSize: "13px",
         color: "#888888",
@@ -293,7 +342,16 @@ export class MainScene extends Phaser.Scene {
     this.player.moveDirY = dy / len;
 
     const pointer = this.input.activePointer;
-    this.player.facing = Math.atan2(pointer.worldY - this.player.y, pointer.worldX - this.player.x);
+    const worldPoint = this.screenToWorld(pointer.x, pointer.y);
+    this.player.facing = Math.atan2(worldPoint.y - this.player.y, worldPoint.x - this.player.x);
+  }
+
+  private screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
+    const zoom = this.worldContainer.scaleX;
+    return {
+      x: (screenX - this.worldContainer.x) / zoom,
+      y: (screenY - this.worldContainer.y) / zoom,
+    };
   }
 
   private updateBots(time: number): void {
@@ -402,8 +460,7 @@ export class MainScene extends Phaser.Scene {
     );
     this.scoreText.setText(`RED ${score.red}  —  BLUE ${score.blue}`);
 
-    const weaponLabel = this.player.weapon === "sword" ? "🗡️ SWORD (1)" : "🏹 BOW (2)";
-    this.weaponText.setText(weaponLabel);
+    this.updateHotbar();
 
     if (this.match.isOver && !this.resultText.visible) {
       const winner = this.match.winner!;
@@ -429,7 +486,7 @@ export class MainScene extends Phaser.Scene {
 
     if (door) {
       this.nearbyDoor = door;
-      this.doorPromptText.setText("🔓 Press E to open door");
+      this.doorPromptText.setText("👁 Press E to peek next room");
       this.doorPromptText.setVisible(true);
     } else {
       this.nearbyDoor = null;
@@ -439,35 +496,6 @@ export class MainScene extends Phaser.Scene {
 
   private tryEnterDoor(): void {
     if (!this.gameStarted || this.match.isOver || !this.nearbyDoor) return;
-
-    const door = this.nearbyDoor;
-    const targetRoom = this.labMap.rooms[door.targetRoomId];
-    if (!targetRoom) return;
-
-    this.visitedRooms.add(door.targetRoomId);
-
-    let newX = this.player.x;
-    let newY = this.player.y;
-
-    switch (door.direction) {
-      case "east":
-        newX = targetRoom.x + 30;
-        newY = door.y;
-        break;
-      case "west":
-        newX = targetRoom.x + targetRoom.w - 30;
-        newY = door.y;
-        break;
-      case "south":
-        newX = door.x;
-        newY = targetRoom.y + 30;
-        break;
-      case "north":
-        newX = door.x;
-        newY = targetRoom.y + targetRoom.h - 30;
-        break;
-    }
-
-    this.player.teleportTo(newX, newY);
+    this.visitedRooms.add(this.nearbyDoor.targetRoomId);
   }
 }
