@@ -72,6 +72,7 @@ export class LabMap {
   readonly width = GRID_COLS * CELL_W;
   readonly height = GRID_ROWS * CELL_H;
   readonly flagSpawns: Point[] = [];
+  readonly treasureSpawns: Point[] = [];
   readonly baseSpawns: Record<TeamId, Point>;
   rooms: Room[] = [];
 
@@ -114,6 +115,22 @@ export class LabMap {
         const room = this.rooms[cellToBlock[fcid]];
         this.flagSpawns.push({ x: room.x + room.w / 2, y: room.y + room.h / 2 });
       }
+    }
+
+    // Place treasures in random rooms (not reserved spawn/flag rooms)
+    const reservedRoomIds = new Set(availableFlagCells.map(fcid => cellToBlock[fcid]));
+    reservedRoomIds.add(cellToBlock[cellId(0, 0)]);
+    reservedRoomIds.add(cellToBlock[cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
+    const treasureRooms = this.rooms.filter(r => !reservedRoomIds.has(r.id));
+    const treasureRng = mulberry32(seed + 7777);
+    const treasureCount = Math.min(6, Math.max(3, Math.floor(treasureRooms.length * 0.2)));
+    for (let i = 0; i < treasureCount && treasureRooms.length > 0; i++) {
+      const idx = Math.floor(treasureRng() * treasureRooms.length);
+      const room = treasureRooms[idx];
+      const offsetX = (treasureRng() - 0.5) * Math.min(room.w, 80);
+      const offsetY = (treasureRng() - 0.5) * Math.min(room.h, 80);
+      this.treasureSpawns.push({ x: room.x + room.w / 2 + offsetX, y: room.y + room.h / 2 + offsetY });
+      treasureRooms.splice(idx, 1);
     }
   }
 

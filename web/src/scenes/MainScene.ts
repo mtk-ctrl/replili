@@ -7,6 +7,7 @@ import { Character } from "../entities/Character";
 import { BotAI } from "../entities/BotAI";
 import { MatchManager } from "../match/MatchManager";
 import { Minimap } from "../ui/Minimap";
+import { Treasure } from "../entities/Treasure";
 
 interface TeamRoster {
   human: Character | null;
@@ -16,6 +17,7 @@ interface TeamRoster {
 export class MainScene extends Phaser.Scene {
   private labMap!: LabMap;
   private flags: Flag[] = [];
+  private treasures: Treasure[] = [];
   private arrows: Arrow[] = [];
   private roster!: Record<TeamId, TeamRoster>;
   private player!: Character;
@@ -39,6 +41,7 @@ export class MainScene extends Phaser.Scene {
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
   private doorPromptText!: Phaser.GameObjects.Text;
   private nearbyDoor: Door | null = null;
+  private nearbyTreasure: Treasure | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
   private minimap!: Minimap;
   private readonly ZOOM = 2.2;
@@ -56,6 +59,12 @@ export class MainScene extends Phaser.Scene {
       const flag = new Flag(this, spawn.x, spawn.y);
       this.worldContainer.add(flag.gfx);
       return flag;
+    });
+
+    this.treasures = this.labMap.treasureSpawns.map((spawn) => {
+      const treasure = new Treasure(this, spawn.x, spawn.y);
+      this.worldContainer.add(treasure.container);
+      return treasure;
     });
 
     this.roster = {
@@ -498,19 +507,38 @@ export class MainScene extends Phaser.Scene {
 
   private updateDoorProximity(): void {
     const door = this.labMap.getDoorAt(this.player.x, this.player.y, 60);
+    this.nearbyDoor = door || null;
+
+    let treasure: Treasure | null = null;
+    for (const t of this.treasures) {
+      if (!t.opened && Math.hypot(t.x - this.player.x, t.y - this.player.y) <= 60) {
+        treasure = t;
+        break;
+      }
+    }
+    this.nearbyTreasure = treasure;
 
     if (door) {
-      this.nearbyDoor = door;
       this.doorPromptText.setText("👁 Press E to peek next room");
       this.doorPromptText.setVisible(true);
+    } else if (treasure) {
+      this.doorPromptText.setText("📦 Press E to open chest");
+      this.doorPromptText.setVisible(true);
     } else {
-      this.nearbyDoor = null;
       this.doorPromptText.setVisible(false);
     }
   }
 
   private tryEnterDoor(): void {
-    if (!this.gameStarted || this.match.isOver || !this.nearbyDoor) return;
-    this.visitedRooms.add(this.nearbyDoor.targetRoomId);
+    if (!this.gameStarted || this.match.isOver) return;
+
+    if (this.nearbyDoor) {
+      this.visitedRooms.add(this.nearbyDoor.targetRoomId);
+    } else if (this.nearbyTreasure) {
+      const hasGrenade = this.nearbyTreasure.open();
+      if (hasGrenade) {
+        this.player.addGrenade();
+      }
+    }
   }
 }

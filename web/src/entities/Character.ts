@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
 import type { LabMap } from "../world/LabMap";
 
-export type WeaponType = "sword" | "bow";
+export type WeaponType = "sword" | "bow" | "grenade";
 
 /** Shared body for both the human player and bots: movement, health, and the sword/bow combat state machine. */
 export class Character {
@@ -17,6 +17,7 @@ export class Character {
   alive = true;
   respawnAt = 0;
   weapon: WeaponType = "sword";
+  grenadeCount = 0;
 
   moveDirX = 0;
   moveDirY = 0;
@@ -76,6 +77,10 @@ export class Character {
     this.weapon = weapon;
   }
 
+  addGrenade(): void {
+    this.grenadeCount += 1;
+  }
+
   applyDamage(amount: number, fromX: number, fromY: number): void {
     if (!this.alive) return;
     this.hp -= amount;
@@ -103,6 +108,7 @@ export class Character {
     this.knockbackVY = 0;
     this.swordReadyAt = 0;
     this.bowReadyAt = 0;
+    this.grenadeCount = 0;
     this.container.setVisible(true);
     this.container.setPosition(x, y);
   }
