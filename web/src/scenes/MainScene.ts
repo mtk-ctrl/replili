@@ -6,6 +6,7 @@ import { Arrow } from "../entities/Arrow";
 import { Character } from "../entities/Character";
 import { BotAI } from "../entities/BotAI";
 import { MatchManager } from "../match/MatchManager";
+import { Minimap } from "../ui/Minimap";
 
 interface TeamRoster {
   human: Character | null;
@@ -39,6 +40,7 @@ export class MainScene extends Phaser.Scene {
   private doorPromptText!: Phaser.GameObjects.Text;
   private nearbyDoor: Door | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
+  private minimap!: Minimap;
   private readonly ZOOM = 2.2;
 
   constructor() {
@@ -72,6 +74,7 @@ export class MainScene extends Phaser.Scene {
     this.match = new MatchManager(GAME_CONFIG.MATCH_SECONDS);
     this.setupInput();
     this.setupHud();
+    this.minimap = new Minimap(this, this.labMap, this.scale.width - 170, this.scale.height - 150);
     this.showTitleScreen();
     this.updateCameraContainer();
 
@@ -110,6 +113,13 @@ export class MainScene extends Phaser.Scene {
     this.updateHud();
     this.applyFOVCulling();
     this.updateDoorProximity();
+    this.updateMinimap();
+  }
+
+  private updateMinimap(): void {
+    const allies = this.roster[this.player.team].bots.map(b => b.character);
+    const enemies = this.enemiesOf(this.player.team);
+    this.minimap.update(this.player, allies, enemies, this.visitedRooms);
   }
 
   private spawnBot(team: TeamId, index: number): void {
