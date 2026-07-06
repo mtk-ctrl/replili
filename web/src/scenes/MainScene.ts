@@ -3,6 +3,7 @@ import { GAME_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId } from "../config";
 import { LabMap, type Door } from "../world/LabMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
+import { Grenade } from "../entities/Grenade";
 import { Character } from "../entities/Character";
 import { BotAI } from "../entities/BotAI";
 import { MatchManager } from "../match/MatchManager";
@@ -19,6 +20,7 @@ export class MainScene extends Phaser.Scene {
   private flags: Flag[] = [];
   private treasures: Treasure[] = [];
   private arrows: Arrow[] = [];
+  private grenades: Grenade[] = [];
   private roster!: Record<TeamId, TeamRoster>;
   private player!: Character;
   private match!: MatchManager;
@@ -39,6 +41,7 @@ export class MainScene extends Phaser.Scene {
   private resultText!: Phaser.GameObjects.Text;
   private fovLayer!: Phaser.GameObjects.Graphics;
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
+  private grenadeCountText!: Phaser.GameObjects.Text;
   private doorPromptText!: Phaser.GameObjects.Text;
   private nearbyDoor: Door | null = null;
   private nearbyTreasure: Treasure | null = null;
@@ -114,6 +117,7 @@ export class MainScene extends Phaser.Scene {
       this.updateCombosAndHits();
       this.updateCharacterPhysics(dt);
       this.updateArrows(dt);
+      this.updateGrenades(dt);
       this.updateRespawns(time);
       this.updateFlags(dt);
     }
@@ -164,6 +168,7 @@ export class MainScene extends Phaser.Scene {
 
     keyboard.addKey("ONE").on("down", () => this.player.switchWeapon("sword"));
     keyboard.addKey("TWO").on("down", () => this.player.switchWeapon("bow"));
+    keyboard.addKey("THREE").on("down", () => this.player.switchWeapon("grenade"));
 
     keyboard.addKey("E").on("down", () => this.tryEnterDoor());
 
@@ -173,6 +178,8 @@ export class MainScene extends Phaser.Scene {
       if (pointer.leftButtonDown()) {
         if (this.player.weapon === "sword") {
           if (this.player.startSwordSwing(this.time.now)) this.applySwordHit(this.player);
+        } else if (this.player.weapon === "grenade") {
+          if (this.player.grenadeCount > 0) this.throwGrenade(this.player);
         }
       } else if (pointer.rightButtonDown()) {
         if (this.player.weapon === "bow") {
@@ -230,14 +237,25 @@ export class MainScene extends Phaser.Scene {
   private setupHotbar(): void {
     const slotSize = 56;
     const gap = 8;
-    const totalWidth = slotSize * 2 + gap;
+    const totalWidth = slotSize * 3 + gap * 2;
     const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
     const y = this.scale.height - 46;
 
     const defs = [
       { icon: "🗡️", key: "1", label: "SWORD" },
       { icon: "🏹", key: "2", label: "BOW" },
+      { icon: "💣", key: "3", label: "GRENADE" },
     ];
+
+    this.grenadeCountText = this.add
+      .text(startX + 2 * (slotSize + gap) + slotSize / 2, y - 8, "0", {
+        fontSize: "16px",
+        color: "#ffd700",
+        fontFamily: "monospace",
+      })
+      .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(152);
 
     defs.forEach((def, i) => {
       const x = startX + i * (slotSize + gap);
@@ -268,7 +286,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   private updateHotbar(): void {
-    const activeIndex = this.player.weapon === "sword" ? 0 : 1;
+    const activeIndex = this.player.weapon === "sword" ? 0 : this.player.weapon === "bow" ? 1 : 2;
     this.hotbarSlots.forEach((slot, i) => {
       if (i === activeIndex) {
         slot.setStrokeStyle(3, 0xffd700, 1);
@@ -278,6 +296,9 @@ export class MainScene extends Phaser.Scene {
         slot.setFillStyle(0x1b1f27, 0.85);
       }
     });
+
+    this.grenadeCountText.setText(String(this.player.grenadeCount));
+    this.grenadeCountText.setColor(this.player.grenadeCount > 0 ? "#ffd700" : "#666666");
   }
 
   private showTitleScreen(): void {
@@ -417,6 +438,20 @@ export class MainScene extends Phaser.Scene {
     this.arrows.push(arrow);
   }
 
+  private throwGrenade(thrower: Character): void {
+    if (thrower.grenadeCount <= 0) return;
+    const speed = 450;
+    const x = thrower.x + Math.cos(thrower.facing) * (thrower.radius + 10);
+    const y = thrower.y + Math.sin(thrower.facing) * (thrower.radius + 10);
+    const vx = Math.cos(thrower.facing) * speed;
+    const vy = Math.sin(thrower.facing) * speed - 150;
+    const grenade = new Grenade(this, x, y, vx, vy);
+    (grenade as any).team = thrower.team;
+    this.worldContainer.add(grenade.container);
+    this.grenades.push(grenade);
+    thrower.grenadeCount--;
+  }
+
   private updateArrows(dt: number): void {
     for (const arrow of this.arrows) {
       if (!arrow.alive) continue;
@@ -443,6 +478,29 @@ export class MainScene extends Phaser.Scene {
     this.arrows = this.arrows.filter((a) => {
       if (!a.alive) a.destroy();
       return a.alive;
+    });
+  }
+
+  private updateGrenades(dt: number): void {
+    for (const grenade of this.grenades) {
+      if (!grenade.alive) continue;
+      grenade.update(dt, this.labMap);
+
+      if (!grenade.alive) {
+        const explosionRadius = 120;
+        for (const target of this.allCharacters()) {
+          if (!target.alive) continue;
+          const dist = Math.hypot(target.x - grenade.x, target.y - grenade.y);
+          if (dist <= explosionRadius) {
+            target.applyDamage(GAME_CONFIG.MAX_HEALTH, grenade.x, grenade.y);
+          }
+        }
+      }
+    }
+
+    this.grenades = this.grenades.filter((g) => {
+      if (!g.alive) g.destroy();
+      return g.alive;
     });
   }
 
