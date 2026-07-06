@@ -25,7 +25,12 @@ export class BotAI {
     private baseSpawns: Record<TeamId, Point>
   ) {}
 
-  update(now: number, enemies: Character[], fireBow: (shooter: Character, angle: number) => void): void {
+  update(
+    now: number,
+    enemies: Character[],
+    fireBow: (shooter: Character, angle: number) => void,
+    applySwordHit: (attacker: Character) => void
+  ): void {
     const self = this.character;
     if (!self.alive) {
       self.moveDirX = 0;
@@ -35,7 +40,7 @@ export class BotAI {
 
     const nearestEnemy = this.findNearestEnemy(enemies);
     if (nearestEnemy && this.distanceTo(nearestEnemy) < AGGRO_RANGE) {
-      this.engage(now, nearestEnemy, fireBow);
+      this.engage(now, nearestEnemy, fireBow, applySwordHit);
       return;
     }
 
@@ -43,7 +48,12 @@ export class BotAI {
     this.moveToward(now, target.x, target.y);
   }
 
-  private engage(now: number, enemy: Character, fireBow: (shooter: Character, angle: number) => void): void {
+  private engage(
+    now: number,
+    enemy: Character,
+    fireBow: (shooter: Character, angle: number) => void,
+    applySwordHit: (attacker: Character) => void
+  ): void {
     const self = this.character;
     const dx = enemy.x - self.x;
     const dy = enemy.y - self.y;
@@ -53,7 +63,7 @@ export class BotAI {
     if (dist <= SWORD_ENGAGE_RANGE) {
       self.moveDirX = 0;
       self.moveDirY = 0;
-      self.startSwordSwing(now);
+      if (self.startSwordSwing(now)) applySwordHit(self);
     } else if (dist <= BOW_ENGAGE_RANGE) {
       self.moveDirX = 0;
       self.moveDirY = 0;

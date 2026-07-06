@@ -22,9 +22,7 @@ export const GAME_CONFIG = {
 
   SWORD: {
     DAMAGE: 20,
-    HITS: 3,
-    HIT_INTERVAL_MS: 500,
-    COMBO_COOLDOWN_MS: 1200,
+    COOLDOWN_MS: 3000,
     RANGE: 78, // 仮
     ARC_DEGREES: 110,
     KNOCKBACK: 260,

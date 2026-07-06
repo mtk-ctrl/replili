@@ -2,11 +2,7 @@ import Phaser from "phaser";
 import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
 import type { TownMap } from "../world/TownMap";
 
-interface ComboState {
-  hitsLeft: number;
-  nextHitAt: number;
-  lockedUntil: number;
-}
+export type WeaponType = "sword" | "bow";
 
 /** Shared body for both the human player and bots: movement, health, and the sword/bow combat state machine. */
 export class Character {
@@ -20,13 +16,14 @@ export class Character {
   hp = GAME_CONFIG.MAX_HEALTH;
   alive = true;
   respawnAt = 0;
+  weapon: WeaponType = "sword";
 
   moveDirX = 0;
   moveDirY = 0;
 
   private knockbackVX = 0;
   private knockbackVY = 0;
-  private swordCombo: ComboState | null = null;
+  private swordReadyAt = 0;
   private bowReadyAt = 0;
 
   private scene: Phaser.Scene;
@@ -63,8 +60,8 @@ export class Character {
 
   startSwordSwing(now: number): boolean {
     if (!this.alive) return false;
-    if (this.swordCombo && (now < this.swordCombo.lockedUntil || this.swordCombo.hitsLeft > 0)) return false;
-    this.swordCombo = { hitsLeft: GAME_CONFIG.SWORD.HITS, nextHitAt: now, lockedUntil: 0 };
+    if (now < this.swordReadyAt) return false;
+    this.swordReadyAt = now + GAME_CONFIG.SWORD.COOLDOWN_MS;
     return true;
   }
 
@@ -75,18 +72,8 @@ export class Character {
     return true;
   }
 
-  /** Returns true the moment a queued sword hit in the current combo should land. */
-  consumePendingSwordHit(now: number): boolean {
-    const combo = this.swordCombo;
-    if (!combo || combo.hitsLeft <= 0) return false;
-    if (now < combo.nextHitAt) return false;
-    combo.hitsLeft--;
-    if (combo.hitsLeft > 0) {
-      combo.nextHitAt = now + GAME_CONFIG.SWORD.HIT_INTERVAL_MS;
-    } else {
-      combo.lockedUntil = now + GAME_CONFIG.SWORD.COMBO_COOLDOWN_MS;
-    }
-    return true;
+  switchWeapon(weapon: WeaponType): void {
+    this.weapon = weapon;
   }
 
   applyDamage(amount: number, fromX: number, fromY: number): void {
@@ -103,7 +90,6 @@ export class Character {
 
   private die(): void {
     this.alive = false;
-    this.swordCombo = null;
     this.container.setVisible(false);
     this.respawnAt = this.scene.time.now + GAME_CONFIG.RESPAWN_DELAY_MS;
   }
@@ -115,6 +101,8 @@ export class Character {
     this.alive = true;
     this.knockbackVX = 0;
     this.knockbackVY = 0;
+    this.swordReadyAt = 0;
+    this.bowReadyAt = 0;
     this.container.setVisible(true);
     this.container.setPosition(x, y);
   }
