@@ -1,6 +1,6 @@
 # Flag Crafters（仮）
 
-2.5D見下ろしの陣取り対戦ゲーム。カリフォルニアの町を舞台に、赤 vs 青の2チームが複数の旗を奪い合う。剣（近接）と弓（遠距離）でプレイヤー同士の戦闘もできる。詳しいルール・数値バランスは Artifact の設計仕様書（design-doc）を参照する。ここには実装を進める上で毎回必要になる最小限だけを書く。
+2.5D見下ろしの陣取り対戦ゲーム。ラボ内部の3×3グリッド構成された部屋を舞台に、赤 vs 青の2チームが複数の旗を奪い合う。剣（近接）と弓（遠距離）でプレイヤー同士の戦闘もできる。詳しいルール・数値バランスは Artifact の設計仕様書（design-doc）を参照する。ここには実装を進める上で毎回必要になる最小限だけを書く。
 
 ## スタックと起動コマンド
 
@@ -14,15 +14,25 @@ npm run build     # 型チェック(tsc -b) + 本番ビルド
 npm run preview   # ビルド結果をローカルで確認
 ```
 
+## Vercel デプロイ情報
+
+**本番環境URL:** https://replili-vdv4.vercel.app
+
+**デプロイダッシュボード:** https://vercel.com/mtk-ctrls-projects/replili-vdv4
+
+- `main` ブランチへの push で自動デプロイ開始
+- デプロイ状況はダッシュボードで確認可能
+- ゲーム画面確認はVercelのホスト版URLで実施
+
 ## ディレクトリ構成
 
 ```
 web/src/
   main.ts              Phaser.Game の起動
   config.ts            体力・ダメージ・クールダウンなどのバランス数値
-  scenes/MainScene.ts   ゲームループ・入力・HUD・試合進行の中心
-  world/TownMap.ts      町マップの生成、建物との当たり判定、Bot用の経路探索
-  entities/             Character（プレイヤー/Bot共通の本体）, BotAI, Flag, Arrow
+  scenes/MainScene.ts   ゲームループ・入力・HUD・試合進行・FOV管理の中心
+  world/LabMap.ts       ラボマップ生成（3×3部屋グリッド）、当たり判定、Bot用経路探索
+  entities/             Character（プレイヤー/Bot共通）, BotAI, Flag, Arrow
   match/MatchManager.ts 制限時間・勝敗・サドンデスの判定
 ```
 
