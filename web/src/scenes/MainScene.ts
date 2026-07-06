@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { GAME_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId } from "../config";
-import { LabMap, type Door } from "../world/LabMap";
+import { LabMap } from "../world/LabMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
 import { Grenade } from "../entities/Grenade";
@@ -41,9 +41,9 @@ export class MainScene extends Phaser.Scene {
   private resultText!: Phaser.GameObjects.Text;
   private fovLayer!: Phaser.GameObjects.Graphics;
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
+  private grenadeSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [];
   private grenadeCountText!: Phaser.GameObjects.Text;
-  private doorPromptText!: Phaser.GameObjects.Text;
-  private nearbyDoor: Door | null = null;
+  private treasurePromptText!: Phaser.GameObjects.Text;
   private nearbyTreasure: Treasure | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
   private minimap!: Minimap;
@@ -125,7 +125,7 @@ export class MainScene extends Phaser.Scene {
     this.match.tick(delta, this.flags);
     this.updateHud();
     this.applyFOVCulling();
-    this.updateDoorProximity();
+    this.updateTreasureProximity();
     this.updateMinimap();
   }
 
@@ -168,9 +168,11 @@ export class MainScene extends Phaser.Scene {
 
     keyboard.addKey("ONE").on("down", () => this.player.switchWeapon("sword"));
     keyboard.addKey("TWO").on("down", () => this.player.switchWeapon("bow"));
-    keyboard.addKey("THREE").on("down", () => this.player.switchWeapon("grenade"));
+    keyboard.addKey("THREE").on("down", () => {
+      if (this.player.grenadeCount > 0) this.player.switchWeapon("grenade");
+    });
 
-    keyboard.addKey("E").on("down", () => this.tryEnterDoor());
+    keyboard.addKey("E").on("down", () => this.tryOpenTreasure());
 
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
@@ -220,11 +222,11 @@ export class MainScene extends Phaser.Scene {
     this.fovLayer.setDepth(99);
     this.worldContainer.add(this.fovLayer);
 
-    this.doorPromptText = this.add
+    this.treasurePromptText = this.add
       .text(this.scale.width / 2, this.scale.height - 90, "", {
         fontFamily: "monospace",
-        fontSize: "14px",
-        color: "#ffd700",
+        fontSize: "16px",
+        color: "#7dd3fc",
         align: "center",
         fontStyle: "bold",
       })
@@ -247,16 +249,6 @@ export class MainScene extends Phaser.Scene {
       { icon: "💣", key: "3", label: "GRENADE" },
     ];
 
-    this.grenadeCountText = this.add
-      .text(startX + 2 * (slotSize + gap) + slotSize / 2, y - 8, "0", {
-        fontSize: "16px",
-        color: "#ffd700",
-        fontFamily: "monospace",
-      })
-      .setOrigin(0.5, 0.5)
-      .setScrollFactor(0)
-      .setDepth(152);
-
     defs.forEach((def, i) => {
       const x = startX + i * (slotSize + gap);
       const bg = this.add
@@ -265,13 +257,13 @@ export class MainScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(150);
 
-      this.add
+      const icon = this.add
         .text(x, y - 8, def.icon, { fontSize: "24px" })
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(151);
 
-      this.add
+      const label = this.add
         .text(x, y + slotSize / 2 + 10, `${def.key} ${def.label}`, {
           fontFamily: "monospace",
           fontSize: "10px",
@@ -282,13 +274,47 @@ export class MainScene extends Phaser.Scene {
         .setDepth(151);
 
       this.hotbarSlots.push(bg);
+
+      // Grenade slot is hidden until the player actually finds one in a treasure chest.
+      if (i === 2) {
+        this.grenadeCountText = this.add
+          .text(x + slotSize / 2 - 4, y - slotSize / 2 + 2, "", {
+            fontSize: "13px",
+            color: "#ffd700",
+            fontFamily: "monospace",
+            fontStyle: "bold",
+          })
+          .setOrigin(1, 0)
+          .setScrollFactor(0)
+          .setDepth(152);
+
+        this.grenadeSlotObjects = [bg, icon, label, this.grenadeCountText];
+        this.grenadeSlotObjects.forEach((obj) => obj.setVisible(false));
+      }
     });
   }
 
   private updateHotbar(): void {
+    const now = this.time.now;
+    const hasGrenade = this.player.grenadeCount > 0;
+
+    if (hasGrenade !== this.grenadeSlotObjects[0].visible) {
+      this.grenadeSlotObjects.forEach((obj) => obj.setVisible(hasGrenade));
+    }
+    if (hasGrenade) {
+      this.grenadeCountText.setText(`X${this.player.grenadeCount}`);
+    }
+
     const activeIndex = this.player.weapon === "sword" ? 0 : this.player.weapon === "bow" ? 1 : 2;
+    const onCooldown = [now < this.player.swordCooldownEndsAt, now < this.player.bowCooldownEndsAt, false];
+
     this.hotbarSlots.forEach((slot, i) => {
-      if (i === activeIndex) {
+      if (i === 2 && !hasGrenade) return;
+      const isActive = i === activeIndex;
+      if (onCooldown[i]) {
+        slot.setFillStyle(0x0c0c0c, 0.92);
+        slot.setStrokeStyle(3, isActive ? 0x8a7a2a : 0x333333, 1);
+      } else if (isActive) {
         slot.setStrokeStyle(3, 0xffd700, 1);
         slot.setFillStyle(0x3a3a2a, 0.95);
       } else {
@@ -296,9 +322,6 @@ export class MainScene extends Phaser.Scene {
         slot.setFillStyle(0x1b1f27, 0.85);
       }
     });
-
-    this.grenadeCountText.setText(String(this.player.grenadeCount));
-    this.grenadeCountText.setColor(this.player.grenadeCount > 0 ? "#ffd700" : "#666666");
   }
 
   private showTitleScreen(): void {
@@ -416,6 +439,8 @@ export class MainScene extends Phaser.Scene {
   }
 
   private applySwordHit(attacker: Character): void {
+    this.spawnSlashEffect(attacker);
+
     const halfArc = Phaser.Math.DegToRad(GAME_CONFIG.SWORD.ARC_DEGREES / 2);
     for (const enemy of this.enemiesOf(attacker.team)) {
       if (!enemy.alive) continue;
@@ -427,7 +452,73 @@ export class MainScene extends Phaser.Scene {
       const diff = Phaser.Math.Angle.Wrap(angleTo - attacker.facing);
       if (Math.abs(diff) > halfArc) continue;
       enemy.applyDamage(GAME_CONFIG.SWORD.DAMAGE, attacker.x, attacker.y);
+      this.spawnHitEffect(enemy.x, enemy.y);
     }
+  }
+
+  /** Quick fading arc drawn in the sword's swing direction so a swing is readable even when it misses. */
+  private spawnSlashEffect(attacker: Character): void {
+    const halfArc = Phaser.Math.DegToRad(GAME_CONFIG.SWORD.ARC_DEGREES / 2);
+    const g = this.add.graphics();
+    g.lineStyle(5, 0xf2e9d8, 0.95);
+    g.beginPath();
+    g.arc(0, 0, GAME_CONFIG.SWORD.RANGE * 0.75, -halfArc, halfArc, false);
+    g.strokePath();
+    g.setPosition(attacker.x, attacker.y);
+    g.setRotation(attacker.facing);
+    g.setDepth(11);
+    this.worldContainer.add(g);
+
+    this.tweens.add({
+      targets: g,
+      alpha: { from: 1, to: 0 },
+      scaleX: { from: 0.75, to: 1.25 },
+      scaleY: { from: 0.75, to: 1.25 },
+      duration: 180,
+      ease: "Cubic.easeOut",
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  /** Shared "something got hit" burst — used for sword, arrows, and grenades. */
+  private spawnHitEffect(x: number, y: number, big = false): void {
+    const t = this.add.text(x, y, "💥", { fontSize: big ? "44px" : "26px" }).setOrigin(0.5).setDepth(60);
+    this.worldContainer.add(t);
+
+    this.tweens.add({
+      targets: t,
+      scaleX: { from: 0.4, to: 1.2 },
+      scaleY: { from: 0.4, to: 1.2 },
+      alpha: { from: 1, to: 0 },
+      duration: 350,
+      ease: "Cubic.easeOut",
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /** Floating message used for treasure loot results ("手榴弾を1個獲得！" / "ハズレ..."). */
+  private spawnFloatingText(x: number, y: number, text: string, color: string): void {
+    const t = this.add
+      .text(x, y, text, {
+        fontFamily: "monospace",
+        fontSize: "18px",
+        color,
+        fontStyle: "bold",
+        stroke: "#000000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(61);
+    this.worldContainer.add(t);
+
+    this.tweens.add({
+      targets: t,
+      y: y - 44,
+      alpha: 0,
+      duration: 1000,
+      ease: "Cubic.easeOut",
+      onComplete: () => t.destroy(),
+    });
   }
 
   private spawnArrow(shooter: Character, angle: number): void {
@@ -450,6 +541,7 @@ export class MainScene extends Phaser.Scene {
     this.worldContainer.add(grenade.container);
     this.grenades.push(grenade);
     thrower.grenadeCount--;
+    if (thrower.grenadeCount === 0 && thrower.weapon === "grenade") thrower.switchWeapon("sword");
   }
 
   private updateArrows(dt: number): void {
@@ -469,6 +561,7 @@ export class MainScene extends Phaser.Scene {
           const behindX = arrow.x - Math.cos(arrow.angle) * 20;
           const behindY = arrow.y - Math.sin(arrow.angle) * 20;
           target.applyDamage(GAME_CONFIG.BOW.DAMAGE, behindX, behindY);
+          this.spawnHitEffect(target.x, target.y);
           arrow.alive = false;
           break;
         }
@@ -487,6 +580,7 @@ export class MainScene extends Phaser.Scene {
       grenade.update(dt, this.labMap);
 
       if (!grenade.alive) {
+        this.spawnHitEffect(grenade.x, grenade.y, true);
         const explosionRadius = 120;
         for (const target of this.allCharacters()) {
           if (!target.alive) continue;
@@ -563,40 +657,47 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  private updateDoorProximity(): void {
-    const door = this.labMap.getDoorAt(this.player.x, this.player.y, 60);
-    this.nearbyDoor = door || null;
+  /** Only the human player can trigger chests — bots never call tryOpenTreasure, so CPUs can't loot them. */
+  private updateTreasureProximity(): void {
+    const OPEN_RANGE = 70;
+    let closest: Treasure | null = null;
+    let closestDist = Infinity;
 
-    let treasure: Treasure | null = null;
     for (const t of this.treasures) {
-      if (!t.opened && Math.hypot(t.x - this.player.x, t.y - this.player.y) <= 60) {
-        treasure = t;
-        break;
+      if (t.opened) continue;
+      const dist = Math.hypot(t.x - this.player.x, t.y - this.player.y);
+      if (dist <= OPEN_RANGE && dist < closestDist) {
+        closestDist = dist;
+        closest = t;
       }
     }
-    this.nearbyTreasure = treasure;
 
-    if (door) {
-      this.doorPromptText.setText("👁 Press E to peek next room");
-      this.doorPromptText.setVisible(true);
-    } else if (treasure) {
-      this.doorPromptText.setText("📦 Press E to open chest");
-      this.doorPromptText.setVisible(true);
+    for (const t of this.treasures) {
+      t.setIndicatorVisible(t === closest);
+    }
+
+    this.nearbyTreasure = closest;
+    if (closest) {
+      this.treasurePromptText.setText("💎Eキーで宝箱を開ける💎");
+      this.treasurePromptText.setVisible(true);
     } else {
-      this.doorPromptText.setVisible(false);
+      this.treasurePromptText.setVisible(false);
     }
   }
 
-  private tryEnterDoor(): void {
-    if (!this.gameStarted || this.match.isOver) return;
+  private tryOpenTreasure(): void {
+    if (!this.gameStarted || this.match.isOver || !this.nearbyTreasure) return;
 
-    if (this.nearbyDoor) {
-      this.visitedRooms.add(this.nearbyDoor.targetRoomId);
-    } else if (this.nearbyTreasure) {
-      const hasGrenade = this.nearbyTreasure.open();
-      if (hasGrenade) {
-        this.player.addGrenade();
-      }
+    const treasure = this.nearbyTreasure;
+    const gotGrenade = treasure.open();
+    if (gotGrenade) {
+      this.player.addGrenade();
+      this.spawnFloatingText(treasure.x, treasure.y - 40, "手榴弾を1個獲得！", "#ffd700");
+    } else {
+      this.spawnFloatingText(treasure.x, treasure.y - 40, "ハズレ…", "#aaaaaa");
     }
+
+    this.nearbyTreasure = null;
+    this.treasurePromptText.setVisible(false);
   }
 }

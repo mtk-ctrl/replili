@@ -59,6 +59,14 @@ export class Character {
     this.container.setDepth(10);
   }
 
+  get swordCooldownEndsAt(): number {
+    return this.swordReadyAt;
+  }
+
+  get bowCooldownEndsAt(): number {
+    return this.bowReadyAt;
+  }
+
   startSwordSwing(now: number): boolean {
     if (!this.alive) return false;
     if (now < this.swordReadyAt) return false;

@@ -371,23 +371,6 @@ export class LabMap {
     return null;
   }
 
-  /** Nearby door for the "peek next room" prompt — only searches the room the caller is standing in. */
-  getDoorAt(x: number, y: number, radius: number): Door | null {
-    const currentRoom = this.getRoomAt(x, y);
-    if (!currentRoom) return null;
-
-    let best: Door | null = null;
-    let bestDist = Infinity;
-    for (const door of currentRoom.doors) {
-      const dist = Math.hypot(door.x - x, door.y - y);
-      if (dist <= radius && dist < bestDist) {
-        bestDist = dist;
-        best = door;
-      }
-    }
-    return best;
-  }
-
   isFree(x: number, y: number, radius: number): boolean {
     if (x - radius < 0 || y - radius < 0 || x + radius > this.width || y + radius > this.height) {
       return false;
