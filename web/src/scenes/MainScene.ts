@@ -19,6 +19,8 @@ export class MainScene extends Phaser.Scene {
   private roster!: Record<TeamId, TeamRoster>;
   private player!: Character;
   private match!: MatchManager;
+  private gameStarted = false;
+  private titleScreen!: Phaser.GameObjects.Container;
 
   private keys!: {
     up: Phaser.Input.Keyboard.Key;
@@ -30,6 +32,7 @@ export class MainScene extends Phaser.Scene {
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private resultText!: Phaser.GameObjects.Text;
+  private weaponText!: Phaser.GameObjects.Text;
 
   constructor() {
     super("main");
@@ -59,9 +62,12 @@ export class MainScene extends Phaser.Scene {
     this.match = new MatchManager(GAME_CONFIG.MATCH_SECONDS);
     this.setupInput();
     this.setupHud();
+    this.showTitleScreen();
   }
 
   update(time: number, delta: number): void {
+    if (!this.gameStarted) return;
+
     const dt = delta / 1000;
 
     if (!this.match.isOver) {
@@ -97,13 +103,20 @@ export class MainScene extends Phaser.Scene {
       right: keyboard.addKey("D"),
     };
 
+    keyboard.addKey("1").on("down", () => this.player.switchWeapon("sword"));
+    keyboard.addKey("2").on("down", () => this.player.switchWeapon("bow"));
+
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      if (this.match.isOver) return;
+      if (this.match.isOver || !this.gameStarted) return;
       if (pointer.leftButtonDown()) {
-        this.player.startSwordSwing(this.time.now);
+        if (this.player.weapon === "sword") {
+          if (this.player.startSwordSwing(this.time.now)) this.applySwordHit(this.player);
+        }
       } else if (pointer.rightButtonDown()) {
-        if (this.player.fireBow(this.time.now)) this.spawnArrow(this.player, this.player.facing);
+        if (this.player.weapon === "bow") {
+          if (this.player.fireBow(this.time.now)) this.spawnArrow(this.player, this.player.facing);
+        }
       }
     });
   }
@@ -121,6 +134,12 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(100);
 
+    this.weaponText = this.add
+      .text(20, 20, "", { fontFamily: "monospace", fontSize: "14px", color: "#c9c2b2" })
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(100);
+
     this.resultText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, "", {
         fontFamily: "georgia, serif",
@@ -132,6 +151,47 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(200)
       .setVisible(false);
+  }
+
+  private showTitleScreen(): void {
+    const bgRect = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0c1118);
+    bgRect.setScrollFactor(0).setDepth(200);
+
+    const titleText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 60, "FLAG CRAFTERS", {
+        fontFamily: "georgia, serif",
+        fontSize: "48px",
+        color: "#f2e9d8",
+        align: "center",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(201);
+
+    const startButton = this.add
+      .rectangle(this.scale.width / 2, this.scale.height / 2 + 40, 150, 50, 0xc9c2b2)
+      .setScrollFactor(0)
+      .setDepth(201)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerdown", () => this.startGame());
+
+    const buttonText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 + 40, "START", {
+        fontFamily: "monospace",
+        fontSize: "20px",
+        color: "#0c1118",
+        align: "center",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(202);
+
+    this.titleScreen = this.add.container(0, 0, [bgRect, titleText, startButton, buttonText]);
+  }
+
+  private startGame(): void {
+    this.gameStarted = true;
+    this.titleScreen.destroy();
   }
 
   private allCharacters(): Character[] {
@@ -168,16 +228,16 @@ export class MainScene extends Phaser.Scene {
     for (const team of ["red", "blue"] as TeamId[]) {
       const enemies = this.enemiesOf(team);
       for (const bot of this.roster[team].bots) {
-        bot.ai.update(time, enemies, (shooter, angle) => this.spawnArrow(shooter, angle));
+        bot.ai.update(time, enemies, (shooter, angle) => this.spawnArrow(shooter, angle), (attacker) =>
+          this.applySwordHit(attacker)
+        );
       }
     }
   }
 
   private updateCombosAndHits(): void {
-    const now = this.time.now;
-    for (const attacker of this.allCharacters()) {
-      if (attacker.consumePendingSwordHit(now)) this.applySwordHit(attacker);
-    }
+    // Sword hits are now applied immediately when the attack is triggered.
+    // This method kept for future extension.
   }
 
   private applySwordHit(attacker: Character): void {
@@ -267,6 +327,9 @@ export class MainScene extends Phaser.Scene {
       { red: 0, blue: 0 }
     );
     this.scoreText.setText(`RED ${score.red}  —  BLUE ${score.blue}`);
+
+    const weaponLabel = this.player.weapon === "sword" ? "🗡️ SWORD (1)" : "🏹 BOW (2)";
+    this.weaponText.setText(weaponLabel);
 
     if (this.match.isOver && !this.resultText.visible) {
       const winner = this.match.winner!;
