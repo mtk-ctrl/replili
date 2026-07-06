@@ -57,6 +57,8 @@ export class MainScene extends Phaser.Scene {
     this.load.image("chest-closed", "assets/tiny-dungeon/chest_closed.png");
     this.load.image("chest-open", "assets/tiny-dungeon/chest_open.png");
     this.load.image("sword-icon", "assets/tiny-dungeon/sword.png");
+    this.load.image("character-sprite", "assets/tiny-dungeon/character.png");
+    this.load.image("explosion", "assets/effects/explosion.png");
   }
 
   create(): void {
@@ -183,15 +185,16 @@ export class MainScene extends Phaser.Scene {
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       if (this.match.isOver || !this.gameStarted) return;
-      if (pointer.leftButtonDown()) {
-        if (this.player.weapon === "sword") {
-          if (this.player.startSwordSwing(this.time.now)) this.applySwordHit(this.player);
-        } else if (this.player.weapon === "grenade") {
-          if (this.player.grenadeCount > 0) this.throwGrenade(this.player);
-        }
-      } else if (pointer.rightButtonDown()) {
-        if (this.player.weapon === "bow") {
-          if (this.player.fireBow(this.time.now)) this.spawnArrow(this.player, this.player.facing);
+      if (!pointer.leftButtonDown()) return;
+
+      if (this.player.weapon === "sword") {
+        if (this.player.startSwordSwing(this.time.now)) this.applySwordHit(this.player);
+      } else if (this.player.weapon === "bow") {
+        if (this.player.fireBow(this.time.now)) this.spawnArrow(this.player, this.player.facing);
+      } else if (this.player.weapon === "grenade") {
+        if (this.player.grenadeCount > 0) {
+          const target = this.screenToWorld(pointer.x, pointer.y);
+          this.throwGrenade(this.player, target.x, target.y);
         }
       }
     });
@@ -491,17 +494,18 @@ export class MainScene extends Phaser.Scene {
 
   /** Shared "something got hit" burst — used for sword, arrows, and grenades. */
   private spawnHitEffect(x: number, y: number, big = false): void {
-    const t = this.add.text(x, y, "💥", { fontSize: big ? "44px" : "26px" }).setOrigin(0.5).setDepth(60);
-    this.worldContainer.add(t);
+    const targetScale = big ? 0.75 : 0.28;
+    const img = this.add.image(x, y, "explosion").setDepth(60).setScale(targetScale * 0.4);
+    this.worldContainer.add(img);
 
     this.tweens.add({
-      targets: t,
-      scaleX: { from: 0.4, to: 1.2 },
-      scaleY: { from: 0.4, to: 1.2 },
+      targets: img,
+      scaleX: { from: targetScale * 0.4, to: targetScale },
+      scaleY: { from: targetScale * 0.4, to: targetScale },
       alpha: { from: 1, to: 0 },
-      duration: 350,
+      duration: big ? 450 : 320,
       ease: "Cubic.easeOut",
-      onComplete: () => t.destroy(),
+      onComplete: () => img.destroy(),
     });
   }
 
@@ -538,15 +542,11 @@ export class MainScene extends Phaser.Scene {
     this.arrows.push(arrow);
   }
 
-  private throwGrenade(thrower: Character): void {
+  private throwGrenade(thrower: Character, targetX: number, targetY: number): void {
     if (thrower.grenadeCount <= 0) return;
-    const speed = 450;
     const x = thrower.x + Math.cos(thrower.facing) * (thrower.radius + 10);
     const y = thrower.y + Math.sin(thrower.facing) * (thrower.radius + 10);
-    const vx = Math.cos(thrower.facing) * speed;
-    const vy = Math.sin(thrower.facing) * speed - 150;
-    const grenade = new Grenade(this, x, y, vx, vy);
-    (grenade as any).team = thrower.team;
+    const grenade = new Grenade(this, x, y, targetX, targetY);
     this.worldContainer.add(grenade.container);
     this.grenades.push(grenade);
     thrower.grenadeCount--;
@@ -586,7 +586,7 @@ export class MainScene extends Phaser.Scene {
   private updateGrenades(dt: number): void {
     for (const grenade of this.grenades) {
       if (!grenade.alive) continue;
-      grenade.update(dt, this.labMap);
+      grenade.update(dt);
 
       if (!grenade.alive) {
         this.spawnHitEffect(grenade.x, grenade.y, true);

@@ -22,7 +22,7 @@ export const GAME_CONFIG = {
 
   SWORD: {
     DAMAGE: 20,
-    COOLDOWN_MS: 3000,
+    COOLDOWN_MS: 2000,
     RANGE: 78, // 仮
     ARC_DEGREES: 110,
     KNOCKBACK: 260,
@@ -30,7 +30,7 @@ export const GAME_CONFIG = {
 
   BOW: {
     DAMAGE: 10,
-    COOLDOWN_MS: 4000,
+    COOLDOWN_MS: 2500,
     RANGE: 640, // 仮
     ARROW_SPEED: 560,
   },

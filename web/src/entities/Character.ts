@@ -30,7 +30,8 @@ export class Character {
   private scene: Phaser.Scene;
   private map: LabMap;
   readonly container: Phaser.GameObjects.Container;
-  private facingGfx: Phaser.GameObjects.Rectangle;
+  private weaponSprite: Phaser.GameObjects.Image;
+  private weaponEmoji: Phaser.GameObjects.Text;
   private hpBarFill: Phaser.GameObjects.Rectangle;
 
   constructor(scene: Phaser.Scene, map: LabMap, team: TeamId, x: number, y: number, isHuman: boolean) {
@@ -41,13 +42,27 @@ export class Character {
     this.x = x;
     this.y = y;
 
-    const body = scene.add.circle(0, 0, this.radius, TEAM_COLOR[team]);
-    body.setStrokeStyle(3, isHuman ? 0xf6e58d : 0x1b1f27, isHuman ? 1 : 0.6);
-    this.facingGfx = scene.add.rectangle(this.radius - 2, 0, 16, 6, 0xf2e9d8);
+    // Colored medallion behind the portrait sprite doubles as the team indicator
+    // (the sprite art itself is the same for both teams).
+    const teamRing = scene.add.circle(0, 0, this.radius + 6, TEAM_COLOR[team]);
+    teamRing.setStrokeStyle(3, isHuman ? 0xf6e58d : 0x1b1f27, isHuman ? 1 : 0.6);
+
+    const portrait = scene.add.image(0, 0, "character-sprite").setScale(this.radius * 2 / 16);
+
+    this.weaponSprite = scene.add.image(0, 0, "sword-icon").setScale(1.6);
+    this.weaponEmoji = scene.add.text(0, 0, "🏹", { fontSize: "18px" }).setOrigin(0.5);
+
     const hpBarBg = scene.add.rectangle(0, -this.radius - 12, 40, 6, 0x1b1f27, 0.8);
     this.hpBarFill = scene.add.rectangle(-20, -this.radius - 12, 40, 6, 0x63c964).setOrigin(0, 0.5);
 
-    const children: Phaser.GameObjects.GameObject[] = [body, this.facingGfx, hpBarBg, this.hpBarFill];
+    const children: Phaser.GameObjects.GameObject[] = [
+      teamRing,
+      portrait,
+      this.weaponSprite,
+      this.weaponEmoji,
+      hpBarBg,
+      this.hpBarFill,
+    ];
     if (isHuman) {
       const label = scene.add
         .text(0, -this.radius - 26, "YOU", { fontFamily: "monospace", fontSize: "11px", color: "#f6e58d" })
@@ -57,6 +72,7 @@ export class Character {
 
     this.container = scene.add.container(x, y, children);
     this.container.setDepth(10);
+    this.updateWeaponVisual();
   }
 
   get swordCooldownEndsAt(): number {
@@ -83,6 +99,14 @@ export class Character {
 
   switchWeapon(weapon: WeaponType): void {
     this.weapon = weapon;
+    this.updateWeaponVisual();
+  }
+
+  /** Shows whichever weapon is equipped "in hand" so it's obvious at a glance what will fire. */
+  private updateWeaponVisual(): void {
+    this.weaponSprite.setVisible(this.weapon === "sword");
+    this.weaponEmoji.setVisible(this.weapon !== "sword");
+    this.weaponEmoji.setText(this.weapon === "bow" ? "🏹" : "💣");
   }
 
   addGrenade(): void {
@@ -152,8 +176,14 @@ export class Character {
     }
 
     this.container.setPosition(this.x, this.y);
-    this.facingGfx.setPosition(Math.cos(this.facing) * (this.radius - 2), Math.sin(this.facing) * (this.radius - 2));
-    this.facingGfx.setRotation(this.facing);
+
+    const handDist = this.radius + 10;
+    const handX = Math.cos(this.facing) * handDist;
+    const handY = Math.sin(this.facing) * handDist;
+    const handRotation = this.facing + Math.PI / 2;
+    this.weaponSprite.setPosition(handX, handY).setRotation(handRotation);
+    this.weaponEmoji.setPosition(handX, handY).setRotation(handRotation);
+
     this.hpBarFill.width = 40 * (this.hp / GAME_CONFIG.MAX_HEALTH);
   }
 

@@ -1,60 +1,54 @@
 import Phaser from "phaser";
-import type { LabMap } from "../world/LabMap";
 
+const THROW_SPEED = 640; // px/sec toward the target
+const MIN_FLIGHT_MS = 150;
+
+/** Flies in a straight line to wherever it was aimed and explodes on arrival; the arc is a purely visual lift. */
 export class Grenade {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
   alive = true;
   readonly radius = 12;
 
   readonly container: Phaser.GameObjects.Container;
-  private gfx: Phaser.GameObjects.Rectangle;
-  private gravity = 600;
-  private bounceCount = 0;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, vx: number, vy: number) {
+  private startX: number;
+  private startY: number;
+  private targetX: number;
+  private targetY: number;
+  private flightMs: number;
+  private elapsedMs = 0;
+
+  constructor(scene: Phaser.Scene, x: number, y: number, targetX: number, targetY: number) {
     this.x = x;
     this.y = y;
-    this.vx = vx;
-    this.vy = vy;
+    this.startX = x;
+    this.startY = y;
+    this.targetX = targetX;
+    this.targetY = targetY;
 
-    this.gfx = scene.add.rectangle(0, 0, 20, 20, 0x2d2d2d);
-    this.gfx.setStrokeStyle(2, 0xf4a460, 1);
+    const dist = Math.hypot(targetX - x, targetY - y);
+    this.flightMs = Math.max(MIN_FLIGHT_MS, (dist / THROW_SPEED) * 1000);
 
-    this.container = scene.add.container(x, y, [this.gfx]);
+    const gfx = scene.add.rectangle(0, 0, 20, 20, 0x2d2d2d).setStrokeStyle(2, 0xf4a460, 1);
+    this.container = scene.add.container(x, y, [gfx]);
     this.container.setDepth(8);
   }
 
-  update(dt: number, map: LabMap): void {
+  update(dtSeconds: number): void {
     if (!this.alive) return;
 
-    this.vy += this.gravity * dt;
-    const nextX = this.x + this.vx * dt;
-    const nextY = this.y + this.vy * dt;
+    this.elapsedMs += dtSeconds * 1000;
+    const t = Math.min(1, this.elapsedMs / this.flightMs);
+    this.x = Phaser.Math.Linear(this.startX, this.targetX, t);
+    this.y = Phaser.Math.Linear(this.startY, this.targetY, t);
 
-    // Check collision with walls
-    if (map.isFree(nextX, this.y, this.radius)) {
-      this.x = nextX;
-    } else {
-      this.vx *= -0.6;
-      this.bounceCount++;
-    }
+    // Purely visual hop — lifts and grows the sprite mid-flight without affecting the actual landing spot.
+    const arc = Math.sin(t * Math.PI);
+    this.container.setPosition(this.x, this.y - arc * 30);
+    this.container.setScale(1 + arc * 0.4);
 
-    if (map.isFree(this.x, nextY, this.radius)) {
-      this.y = nextY;
-    } else {
-      this.vy *= -0.6;
-      this.bounceCount++;
-    }
-
-    this.container.setPosition(this.x, this.y);
-
-    // Explode after bouncing a few times or velocity becomes very low
-    if (this.bounceCount > 3 || (Math.hypot(this.vx, this.vy) < 50 && this.bounceCount > 0)) {
-      this.alive = false;
-    }
+    if (t >= 1) this.alive = false;
   }
 
   destroy(): void {

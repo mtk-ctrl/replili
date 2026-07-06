@@ -90,7 +90,7 @@ export class Treasure {
     }
   }
 
-  /** Rolls the loot, plays the opening animation, and returns whether a grenade was found. */
+  /** Plays the opening animation and returns whether a grenade was found (always true — every chest holds one). */
   open(): boolean {
     if (this.opened) return false;
     this.opened = true;
@@ -113,7 +113,7 @@ export class Treasure {
       ease: "Back.easeOut",
     });
 
-    return Math.random() < 0.3;
+    return true;
   }
 
   destroy(): void {
