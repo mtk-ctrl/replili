@@ -30,10 +30,25 @@ export class Grenade {
     const dist = Math.hypot(targetX - x, targetY - y);
     this.flightMs = Math.max(MIN_FLIGHT_MS, (dist / THROW_SPEED) * 1000);
 
-    const gfx = scene.add.rectangle(0, 0, 20, 20, 0x2d2d2d).setStrokeStyle(2, 0xf4a460, 1);
-    this.container = scene.add.container(x, y, [gfx]);
+    // Round bomb with a lit, sputtering fuse instead of the old flat square.
+    const body = scene.add.circle(0, 0, 9, 0x23262d).setStrokeStyle(2, 0x0d0f13, 1);
+    const shine = scene.add.circle(-3, -3, 3, 0xffffff, 0.3);
+    const fuse = scene.add.rectangle(6, -9, 2.5, 8, 0x8a6a3a).setRotation(0.5);
+    const spark = scene.add.circle(9, -13, 3, 0xffd05a);
+    this.container = scene.add.container(x, y, [body, shine, fuse, spark]);
     this.container.setDepth(8);
+
+    this.sparkTween = scene.tweens.add({
+      targets: spark,
+      alpha: { from: 1, to: 0.3 },
+      scale: { from: 1, to: 1.7 },
+      duration: 110,
+      yoyo: true,
+      repeat: -1,
+    });
   }
+
+  private sparkTween: Phaser.Tweens.Tween;
 
   update(dtSeconds: number): void {
     if (!this.alive) return;
@@ -52,6 +67,7 @@ export class Grenade {
   }
 
   destroy(): void {
+    this.sparkTween.stop();
     this.container.destroy();
   }
 }

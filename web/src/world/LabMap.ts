@@ -73,10 +73,14 @@ export class LabMap {
   readonly height = GRID_ROWS * CELL_H;
   readonly flagSpawns: Point[] = [];
   readonly treasureSpawns: Point[] = [];
+  /** Wall-torch positions gathered during render; MainScene attaches animated flames/glows here. */
+  readonly torchSpawns: Point[] = [];
   readonly baseSpawns: Record<TeamId, Point>;
   rooms: Room[] = [];
 
   private connectors: Rect[] = [];
+  /** Door passages with the two rooms they join — used by FOV culling to hide unexplored corridors. */
+  readonly connectorLinks: { x: number; y: number; w: number; h: number; a: number; b: number }[] = [];
   private doorways: { x: number; y: number; direction: Door["direction"] }[] = [];
   private nodePos: Point[] = [];
   private adjacency: number[][] = [];
@@ -332,6 +336,7 @@ export class LabMap {
         const gapStart = roomA.x + roomA.w;
         const gapEnd = roomB.x;
         this.connectors.push({ x: gapStart, y: doorY - DOOR_SIZE / 2, w: gapEnd - gapStart, h: DOOR_SIZE });
+        this.connectorLinks.push({ x: gapStart, y: doorY - DOOR_SIZE / 2, w: gapEnd - gapStart, h: DOOR_SIZE, a: roomA.id, b: roomB.id });
         roomA.doors.push({ x: gapStart, y: doorY, targetRoomId: roomB.id, direction: "east" });
         roomB.doors.push({ x: gapEnd, y: doorY, targetRoomId: roomA.id, direction: "west" });
         this.doorways.push({ x: (gapStart + gapEnd) / 2, y: doorY, direction: "east" });
@@ -340,6 +345,7 @@ export class LabMap {
         const gapStart = roomA.y + roomA.h;
         const gapEnd = roomB.y;
         this.connectors.push({ x: doorX - DOOR_SIZE / 2, y: gapStart, w: DOOR_SIZE, h: gapEnd - gapStart });
+        this.connectorLinks.push({ x: doorX - DOOR_SIZE / 2, y: gapStart, w: DOOR_SIZE, h: gapEnd - gapStart, a: roomA.id, b: roomB.id });
         roomA.doors.push({ x: doorX, y: gapStart, targetRoomId: roomB.id, direction: "south" });
         roomB.doors.push({ x: doorX, y: gapEnd, targetRoomId: roomA.id, direction: "north" });
         this.doorways.push({ x: doorX, y: (gapStart + gapEnd) / 2, direction: "south" });
@@ -463,32 +469,198 @@ export class LabMap {
     return refinedPath;
   }
 
-  private renderFloor(g: Phaser.GameObjects.Graphics, room: Room): void {
-    const TILE = 30;
-    for (let ty = room.y; ty < room.y + room.h; ty += TILE) {
-      for (let tx = room.x; tx < room.x + room.w; tx += TILE) {
-        const w = Math.min(TILE, room.x + room.w - tx);
-        const h = Math.min(TILE, room.y + room.h - ty);
-        const checker = (Math.round((tx - room.x) / TILE) + Math.round((ty - room.y) / TILE)) % 2 === 0;
-        const base = room.flavor === "hall" ? [0x3f3a2e, 0x38341f] : [0x3d3d3d, 0x363636];
-        g.fillStyle(checker ? base[0] : base[1], 1);
+  /** Stone/marble/carpet floors with per-tile shade variation so large rooms don't read as flat color. */
+  private renderFloor(g: Phaser.GameObjects.Graphics, rect: Rect, flavor: RoomFlavor, rng: () => number): void {
+    const isHall = flavor === "hall";
+    const TILE = isHall ? 48 : 32;
+    const palettes: Record<RoomFlavor, number[]> = {
+      lab: [0x4a4e58, 0x454952, 0x41454e, 0x4d525c],
+      hall: [0x595442, 0x4c4737, 0x554f3d, 0x484334],
+      corridor: [0x3d4049, 0x383b44, 0x41444d, 0x35383f],
+    };
+    const palette = palettes[flavor];
+
+    for (let ty = rect.y; ty < rect.y + rect.h; ty += TILE) {
+      for (let tx = rect.x; tx < rect.x + rect.w; tx += TILE) {
+        const w = Math.min(TILE, rect.x + rect.w - tx);
+        const h = Math.min(TILE, rect.y + rect.h - ty);
+        const col = Math.round((tx - rect.x) / TILE);
+        const row = Math.round((ty - rect.y) / TILE);
+        let color: number;
+        if (isHall) {
+          // Big marble checker for banquet halls
+          color = (col + row) % 2 === 0 ? palette[0] : palette[1];
+          if (rng() < 0.25) color = (col + row) % 2 === 0 ? palette[2] : palette[3];
+        } else {
+          color = palette[Math.floor(rng() * palette.length)];
+        }
+        g.fillStyle(color, 1);
         g.fillRect(tx, ty, w, h);
+
+        // Bevel: light top-left, dark bottom-right — makes every tile pop slightly
+        g.fillStyle(0xffffff, 0.045);
+        g.fillRect(tx, ty, w, 2);
+        g.fillRect(tx, ty, 2, h);
+        g.fillStyle(0x000000, 0.12);
+        g.fillRect(tx, ty + h - 2, w, 2);
+        g.fillRect(tx + w - 2, ty, 2, h);
+
+        // Occasional crack / stain
+        if (rng() < 0.06 && w === TILE && h === TILE) {
+          g.lineStyle(1, 0x22242b, 0.7);
+          const cx = tx + 4 + rng() * (TILE - 8);
+          const cy = ty + 4 + rng() * (TILE - 8);
+          g.beginPath();
+          g.moveTo(cx, cy);
+          g.lineTo(cx + (rng() - 0.5) * 16, cy + (rng() - 0.5) * 16);
+          g.strokePath();
+        }
       }
     }
 
-    g.lineStyle(1, 0x2f2f2f, 0.5);
-    for (let ty = room.y; ty <= room.y + room.h; ty += TILE) {
+    if (isHall) {
+      // Gold inlay border for halls
+      g.lineStyle(3, 0x8a7845, 0.55);
+      g.strokeRect(rect.x + 12, rect.y + 12, rect.w - 24, rect.h - 24);
+      g.lineStyle(1, 0xc2a860, 0.35);
+      g.strokeRect(rect.x + 16, rect.y + 16, rect.w - 32, rect.h - 32);
+    }
+
+    if (flavor === "corridor" && Math.max(rect.w, rect.h) > 200) {
+      // Crimson runner carpet along the corridor's long axis
+      const horizontal = rect.w >= rect.h;
+      const cw = horizontal ? rect.w - 36 : Math.min(72, rect.w * 0.45);
+      const ch = horizontal ? Math.min(72, rect.h * 0.45) : rect.h - 36;
+      const cx = rect.x + rect.w / 2 - cw / 2;
+      const cy = rect.y + rect.h / 2 - ch / 2;
+      g.fillStyle(0x000000, 0.22);
+      g.fillRect(cx + 3, cy + 4, cw, ch);
+      g.fillStyle(0x6e2f36, 0.92);
+      g.fillRect(cx, cy, cw, ch);
+      g.lineStyle(3, 0x93454d, 0.9);
+      g.strokeRect(cx + 4, cy + 4, cw - 8, ch - 8);
+      g.lineStyle(1, 0xc9a227, 0.5);
+      g.strokeRect(cx + 8, cy + 8, cw - 16, ch - 16);
+    }
+  }
+
+  /** Stone-brick "wall top" pattern filling everything that isn't walkable floor. */
+  private renderWallBackdrop(g: Phaser.GameObjects.Graphics, rng: () => number): void {
+    g.fillStyle(0x171a21, 1);
+    g.fillRect(0, 0, this.width, this.height);
+
+    const BW = 46;
+    const BH = 23;
+    const shades = [0x1d212b, 0x1a1e27, 0x21252f, 0x181c24];
+    for (let by = 0; by < this.height; by += BH) {
+      const offset = (Math.round(by / BH) % 2) * (BW / 2);
+      for (let bx = -BW; bx < this.width; bx += BW) {
+        g.fillStyle(shades[Math.floor(rng() * shades.length)], 1);
+        g.fillRect(bx + offset, by, BW - 2, BH - 2);
+      }
+    }
+  }
+
+  /**
+   * Fake 2.5D wall height: a lit vertical face along the top (north) inner edge of
+   * every floor area, skipping door openings, plus a soft AO shadow cast onto the floor.
+   */
+  private renderWallFaces(g: Phaser.GameObjects.Graphics): void {
+    const FACE_H = 14;
+
+    const drawFace = (x: number, y: number, w: number) => {
+      if (w <= 2) return;
+      g.fillStyle(0x565c68, 1);
+      g.fillRect(x, y, w, FACE_H);
+      g.fillStyle(0x6b727f, 1);
+      g.fillRect(x, y, w, 3);
+      g.fillStyle(0x3b404a, 1);
+      g.fillRect(x, y + FACE_H - 3, w, 3);
+      // vertical joints
+      g.lineStyle(1, 0x454b56, 0.9);
+      for (let jx = x + 24; jx < x + w - 4; jx += 26) {
+        g.beginPath();
+        g.moveTo(jx, y + 3);
+        g.lineTo(jx, y + FACE_H - 2);
+        g.strokePath();
+      }
+      // AO shadow below the face
+      g.fillStyle(0x000000, 0.22);
+      g.fillRect(x, y + FACE_H, w, 5);
+      g.fillStyle(0x000000, 0.1);
+      g.fillRect(x, y + FACE_H + 5, w, 5);
+    };
+
+    for (const room of this.rooms) {
+      // Split the top edge around north-facing door openings
+      const gaps = room.doors
+        .filter((d) => d.direction === "north")
+        .map((d) => ({ from: d.x - DOOR_SIZE / 2, to: d.x + DOOR_SIZE / 2 }))
+        .sort((a, b) => a.from - b.from);
+
+      let cursor = room.x;
+      for (const gap of gaps) {
+        drawFace(cursor, room.y, gap.from - cursor);
+        cursor = gap.to;
+      }
+      drawFace(cursor, room.y, room.x + room.w - cursor);
+
+      // Soft side AO strips
+      g.fillStyle(0x000000, 0.12);
+      g.fillRect(room.x, room.y + FACE_H, 4, room.h - FACE_H);
+      g.fillRect(room.x + room.w - 4, room.y + FACE_H, 4, room.h - FACE_H);
+      g.fillRect(room.x, room.y + room.h - 4, room.w, 4);
+    }
+
+    // Horizontal connectors also meet a wall on their top edge
+    for (const c of this.connectors) {
+      if (c.w > c.h) drawFace(c.x, c.y, c.w);
+    }
+  }
+
+  /** Static sconce brackets baked into the map; MainScene layers animated flames on torchSpawns. */
+  private renderTorchSconces(g: Phaser.GameObjects.Graphics, room: Room): void {
+    if (room.flavor === "corridor") return;
+    const positions = room.flavor === "hall" ? [0.15, 0.38, 0.62, 0.85] : [0.28, 0.72];
+    if (room.w < 180) return;
+
+    for (const p of positions) {
+      const tx = room.x + room.w * p;
+      const ty = room.y + 14;
+      // metal bracket + bowl
+      g.fillStyle(0x2a2d33, 1);
+      g.fillRect(tx - 2, ty - 4, 4, 8);
+      g.fillStyle(0x3d424b, 1);
+      g.fillEllipse(tx, ty + 4, 12, 5);
+      this.torchSpawns.push({ x: tx, y: ty - 4 });
+    }
+  }
+
+  /** Gold rune-circle decal marking a flag capture zone. */
+  private renderFlagZone(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+    g.fillStyle(0xd8c878, 0.05);
+    g.fillCircle(x, y, 80);
+    g.lineStyle(2, 0xd8c878, 0.4);
+    g.strokeCircle(x, y, 80);
+    g.lineStyle(1, 0xd8c878, 0.28);
+    g.strokeCircle(x, y, 64);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      g.lineStyle(2, 0xd8c878, 0.4);
       g.beginPath();
-      g.moveTo(room.x, ty);
-      g.lineTo(room.x + room.w, ty);
+      g.moveTo(x + Math.cos(a) * 68, y + Math.sin(a) * 68);
+      g.lineTo(x + Math.cos(a) * 76, y + Math.sin(a) * 76);
       g.strokePath();
     }
-    for (let tx = room.x; tx <= room.x + room.w; tx += TILE) {
-      g.beginPath();
-      g.moveTo(tx, room.y);
-      g.lineTo(tx, room.y + room.h);
-      g.strokePath();
-    }
+    // center diamond
+    g.lineStyle(2, 0xd8c878, 0.35);
+    g.beginPath();
+    g.moveTo(x, y - 32);
+    g.lineTo(x + 32, y);
+    g.lineTo(x, y + 32);
+    g.lineTo(x - 32, y);
+    g.closePath();
+    g.strokePath();
   }
 
   private renderShadow(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number): void {
@@ -588,7 +760,7 @@ export class LabMap {
     }
 
     if (room.flavor === "hall") {
-      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, Math.min(room.w, room.h) * 0.24, 0xc9a227);
+      this.renderRug(g, room.x + room.w / 2, room.y + room.h / 2, Math.min(room.w, room.h) * 0.24, 0x8a3a44);
       this.renderRug(g, room.x + room.w * 0.18, room.y + room.h * 0.18, 26, 0x3f6b8f);
       this.renderRug(g, room.x + room.w * 0.82, room.y + room.h * 0.82, 26, 0x3f6b8f);
       this.renderLabTable(g, room.x + room.w / 2 - 28, room.y + 16);
@@ -605,23 +777,25 @@ export class LabMap {
     this.renderServerRack(g, room.x + room.w - 46, room.y + room.h - 72, rng);
   }
 
-  render(scene: Phaser.Scene, container?: Phaser.GameObjects.Container): Phaser.GameObjects.Graphics {
+  render(scene: Phaser.Scene, container?: Phaser.GameObjects.Container): Phaser.GameObjects.Image {
     const rng = mulberry32(777);
     const g = scene.add.graphics();
-    g.fillStyle(0x1c1e22, 1);
-    g.fillRect(0, 0, this.width, this.height);
+
+    this.renderWallBackdrop(g, rng);
+
+    for (const c of this.connectors) {
+      this.renderFloor(g, c, "corridor", rng);
+    }
 
     for (const room of this.rooms) {
-      this.renderFloor(g, room);
+      this.renderFloor(g, room, room.flavor, rng);
+    }
 
-      g.fillStyle(0x000000, 0.3);
-      g.fillRect(room.x, room.y, room.w, 4);
-      g.fillRect(room.x, room.y, 4, room.h);
+    this.renderWallFaces(g);
 
-      g.lineStyle(3, 0x50565e, 1);
-      g.strokeRect(room.x, room.y, room.w, room.h);
-
+    for (const room of this.rooms) {
       this.renderRoomFurniture(g, room, rng);
+      this.renderTorchSconces(g, room);
     }
 
     for (const doorway of this.doorways) {
@@ -661,19 +835,37 @@ export class LabMap {
     }
 
     for (const spawn of this.flagSpawns) {
-      g.fillStyle(0x3f6b3f, 0.45);
-      g.fillCircle(spawn.x, spawn.y, 80);
-      g.lineStyle(2, 0x3f6b3f, 0.7);
-      g.strokeCircle(spawn.x, spawn.y, 80);
+      this.renderFlagZone(g, spawn.x, spawn.y);
     }
 
-    g.fillStyle(0xac3d29, 0.2);
-    g.fillCircle(this.baseSpawns.red.x, this.baseSpawns.red.y, 100);
-    g.fillStyle(0x285f85, 0.2);
-    g.fillCircle(this.baseSpawns.blue.x, this.baseSpawns.blue.y, 100);
+    const bases: { p: Point; color: number }[] = [
+      { p: this.baseSpawns.red, color: 0xc0392b },
+      { p: this.baseSpawns.blue, color: 0x2f7fb3 },
+    ];
+    for (const { p, color } of bases) {
+      g.fillStyle(color, 0.1);
+      g.fillCircle(p.x, p.y, 100);
+      g.lineStyle(4, color, 0.5);
+      g.strokeCircle(p.x, p.y, 100);
+      g.lineStyle(2, color, 0.3);
+      g.strokeCircle(p.x, p.y, 88);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+        g.fillStyle(color, 0.5);
+        g.fillCircle(p.x + Math.cos(a) * 94, p.y + Math.sin(a) * 94, 4);
+      }
+    }
 
-    g.setDepth(-10);
-    if (container) container.add(g);
-    return g;
+    // Bake the entire static map into a single texture: far cheaper than replaying
+    // thousands of Graphics commands every frame, and lets us afford dense detail.
+    const key = "labmap-static";
+    if (scene.textures.exists(key)) scene.textures.remove(key);
+    g.generateTexture(key, this.width, this.height);
+    g.destroy();
+
+    const img = scene.add.image(0, 0, key).setOrigin(0, 0);
+    img.setDepth(-10);
+    if (container) container.add(img);
+    return img;
   }
 }

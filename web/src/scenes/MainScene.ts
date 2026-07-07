@@ -9,6 +9,7 @@ import { BotAI } from "../entities/BotAI";
 import { MatchManager } from "../match/MatchManager";
 import { Minimap } from "../ui/Minimap";
 import { Treasure } from "../entities/Treasure";
+import { createProceduralTextures } from "../world/TextureFactory";
 
 interface TeamRoster {
   human: Character | null;
@@ -50,6 +51,7 @@ export class MainScene extends Phaser.Scene {
   private worldContainer!: Phaser.GameObjects.Container;
   private minimap!: Minimap;
   private readonly ZOOM = 1.47;
+  private playerLight!: Phaser.GameObjects.Image;
   private previousFlagOwners: Map<Flag, string> = new Map();
   private flagCaptureAnnouncementText: Phaser.GameObjects.Text | null = null;
   private flagScaleAnimTargetTeam: TeamId | null = null;
@@ -68,15 +70,18 @@ export class MainScene extends Phaser.Scene {
   }
 
   create(): void {
+    createProceduralTextures(this);
+
     const mapSeeds = [20260706, 20260707, 20260708, 20260709, 20260710];
     const randomSeed = mapSeeds[Math.floor(Math.random() * mapSeeds.length)];
     this.labMap = new LabMap(randomSeed);
     this.worldContainer = this.add.container(0, 0);
     this.labMap.render(this, this.worldContainer);
+    this.createTorchFlames();
 
     this.flags = this.labMap.flagSpawns.map((spawn) => {
       const flag = new Flag(this, spawn.x, spawn.y);
-      this.worldContainer.add(flag.gfx);
+      this.worldContainer.add(flag.container);
       return flag;
     });
 
@@ -98,6 +103,15 @@ export class MainScene extends Phaser.Scene {
 
     for (let i = 1; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("red", i);
     for (let i = 0; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("blue", i);
+
+    // Warm light pool following the player — cheap fake torchlight.
+    this.playerLight = this.add
+      .image(this.player.x, this.player.y, "fx-glow")
+      .setScale(3.4)
+      .setAlpha(0.13)
+      .setTint(0xffd9a0)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.worldContainer.add(this.playerLight);
 
     this.match = new MatchManager(GAME_CONFIG.MATCH_SECONDS);
     this.setupInput();
@@ -138,11 +152,49 @@ export class MainScene extends Phaser.Scene {
       this.updateFlags(dt);
     }
 
+    this.playerLight.setPosition(this.player.x, this.player.y);
+    this.playerLight.setVisible(this.player.alive);
+
     this.match.tick(delta, this.flags);
     this.updateHud();
     this.applyFOVCulling();
     this.updateTreasureProximity();
     this.updateMinimap();
+  }
+
+  /** Animated flames + flickering warm glows layered over the sconces baked into the map. */
+  private createTorchFlames(): void {
+    for (const t of this.labMap.torchSpawns) {
+      const glow = this.add
+        .image(t.x, t.y + 6, "fx-glow")
+        .setTint(0xff9a3c)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setAlpha(0.26)
+        .setScale(1.05);
+      const flame = this.add.image(t.x, t.y - 4, "fx-flame").setOrigin(0.5, 0.7);
+      this.worldContainer.add(glow);
+      this.worldContainer.add(flame);
+
+      const jitter = Math.random();
+      this.tweens.add({
+        targets: glow,
+        alpha: { from: 0.2, to: 0.34 },
+        scale: { from: 0.95, to: 1.25 },
+        duration: 240 + jitter * 260,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+      this.tweens.add({
+        targets: flame,
+        scaleY: { from: 0.9, to: 1.12 },
+        scaleX: { from: 1, to: 0.88 },
+        duration: 160 + jitter * 180,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+    }
   }
 
   private updateMinimap(): void {
@@ -209,6 +261,16 @@ export class MainScene extends Phaser.Scene {
   }
 
   private setupHud(): void {
+    // Cinematic vignette over everything (screen-space)
+    this.add.image(0, 0, "fx-vignette").setOrigin(0, 0).setScrollFactor(0).setDepth(95);
+
+    // Translucent panel behind the timer/score block
+    const panel = this.add.graphics().setScrollFactor(0).setDepth(98);
+    panel.fillStyle(0x0b0e15, 0.55);
+    panel.fillRoundedRect(this.scale.width / 2 - 130, 10, 260, 84, 14);
+    panel.lineStyle(2, 0x8a7845, 0.55);
+    panel.strokeRoundedRect(this.scale.width / 2 - 130, 10, 260, 84, 14);
+
     this.timerText = this.add
       .text(this.scale.width / 2, 20, "", { fontFamily: "monospace", fontSize: "22px", color: "#f2e9d8" })
       .setOrigin(0.5, 0)
@@ -357,52 +419,125 @@ export class MainScene extends Phaser.Scene {
   }
 
   private showTitleScreen(): void {
-    const bgRect = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x0c1118);
-    bgRect.setOrigin(0, 0).setScrollFactor(0).setDepth(200);
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+
+    const bg = this.add.image(0, 0, "title-bg").setOrigin(0, 0).setScrollFactor(0);
+
+    // Embers drifting up from the bottom of the screen
+    const embers = this.add.particles(0, 0, "fx-spark", {
+      x: { min: 0, max: this.scale.width },
+      y: this.scale.height + 10,
+      lifespan: { min: 4000, max: 7000 },
+      speedY: { min: -34, max: -14 },
+      speedX: { min: -8, max: 8 },
+      scale: { start: 0.9, end: 0 },
+      alpha: { start: 0.55, end: 0 },
+      quantity: 1,
+      frequency: 160,
+      tint: [0xffc46b, 0xff9a3c, 0xd4af37],
+      blendMode: Phaser.BlendModes.ADD,
+    }).setScrollFactor(0);
+
+    const titleGlow = this.add
+      .image(cx, cy - 78, "fx-glow")
+      .setScale(4.5, 1.8)
+      .setAlpha(0.2)
+      .setTint(0xd4af37)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScrollFactor(0);
 
     const titleText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 80, "FLAG CRAFTERS", {
+      .text(cx, cy - 80, "FLAG CRAFTERS", {
         fontFamily: "georgia, serif",
-        fontSize: "56px",
-        color: "#f2e9d8",
+        fontSize: "60px",
+        color: "#f5e6c4",
         align: "center",
         fontStyle: "bold",
+        stroke: "#241a05",
+        strokeThickness: 8,
       })
       .setOrigin(0.5)
       .setScrollFactor(0)
-      .setDepth(201);
+      .setShadow(0, 6, "#000000", 12, true, true);
+
+    const rule = this.add.graphics().setScrollFactor(0);
+    rule.lineStyle(2, 0xd4af37, 0.8);
+    rule.lineBetween(cx - 190, cy - 32, cx - 24, cy - 32);
+    rule.lineBetween(cx + 24, cy - 32, cx + 190, cy - 32);
+    rule.fillStyle(0xd4af37, 0.9);
+    rule.fillCircle(cx, cy - 32, 4);
+    rule.lineStyle(1.5, 0xd4af37, 0.9);
+    rule.strokeCircle(cx, cy - 32, 8);
 
     const subtitleText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 15, "Sprawling Lab • Red vs Blue", {
-        fontFamily: "monospace",
+      .text(cx, cy - 8, "S P R A W L I N G   L A B  •  R E D  v s  B L U E", {
+        fontFamily: "georgia, serif",
         fontSize: "13px",
-        color: "#888888",
+        color: "#b8a878",
         align: "center",
       })
       .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(201);
+      .setScrollFactor(0);
 
-    const startButton = this.add
-      .rectangle(this.scale.width / 2, this.scale.height / 2 + 60, 180, 60, 0x667eea)
-      .setScrollFactor(0)
-      .setDepth(201)
-      .setInteractive({ useHandCursor: true })
-      .on("pointerdown", () => this.startGame());
+    // Ornate start button
+    const btnW = 220;
+    const btnH = 58;
+    const btnY = cy + 70;
+    const button = this.add.graphics().setScrollFactor(0);
+    const drawButton = (hover: boolean) => {
+      button.clear();
+      button.fillStyle(hover ? 0x33405e : 0x263048, 0.95);
+      button.fillRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
+      button.lineStyle(2, 0xd4af37, hover ? 1 : 0.75);
+      button.strokeRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
+      button.lineStyle(1, 0xd4af37, 0.35);
+      button.strokeRoundedRect(cx - btnW / 2 + 4, btnY - btnH / 2 + 4, btnW - 8, btnH - 8, 9);
+    };
+    drawButton(false);
 
     const buttonText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 + 60, "START GAME", {
-        fontFamily: "monospace",
-        fontSize: "18px",
-        color: "#ffffff",
+      .text(cx, btnY, "⚔  START GAME", {
+        fontFamily: "georgia, serif",
+        fontSize: "20px",
+        color: "#f5e6c4",
         align: "center",
         fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(202);
+      .setScrollFactor(0);
 
-    this.titleScreen = this.add.container(0, 0, [bgRect, titleText, subtitleText, startButton, buttonText]);
+    const hitZone = this.add
+      .zone(cx, btnY, btnW, btnH)
+      .setScrollFactor(0)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerover", () => drawButton(true))
+      .on("pointerout", () => drawButton(false))
+      .on("pointerdown", () => this.startGame());
+
+    // Gentle breathing on the title
+    this.tweens.add({
+      targets: [titleText, titleGlow],
+      scaleX: { from: 1, to: 1.02 },
+      scaleY: { from: 1, to: 1.02 },
+      duration: 2000,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+
+    this.titleScreen = this.add.container(0, 0, [
+      bg,
+      embers,
+      titleGlow,
+      titleText,
+      rule,
+      subtitleText,
+      button,
+      buttonText,
+      hitZone,
+    ]);
+    this.titleScreen.setDepth(200);
   }
 
   private startGame(): void {
@@ -414,23 +549,41 @@ export class MainScene extends Phaser.Scene {
     const countdownText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, "3", {
         fontFamily: "georgia, serif",
-        fontSize: "80px",
-        color: "#f2e9d8",
+        fontSize: "88px",
+        color: "#f5e6c4",
         align: "center",
         fontStyle: "bold",
+        stroke: "#241a05",
+        strokeThickness: 10,
       })
       .setOrigin(0.5)
       .setScrollFactor(0)
-      .setDepth(210);
+      .setDepth(210)
+      .setShadow(0, 6, "#000000", 14, true, true);
+
+    const punch = () => {
+      countdownText.setScale(1.7).setAlpha(0);
+      this.tweens.add({
+        targets: countdownText,
+        scale: 1,
+        alpha: 1,
+        duration: 260,
+        ease: "Back.easeOut",
+      });
+    };
+    punch();
 
     let count = 3;
     const updateCountdown = () => {
       count--;
       if (count > 0) {
         countdownText.setText(count.toString());
+        punch();
         this.time.delayedCall(1000, updateCountdown);
       } else {
         countdownText.setText("START!");
+        countdownText.setColor("#ffd700");
+        punch();
         this.time.delayedCall(800, () => {
           countdownText.destroy();
           this.gameStarted = true;
@@ -523,10 +676,15 @@ export class MainScene extends Phaser.Scene {
   private spawnSlashEffect(attacker: Character): void {
     const halfArc = Phaser.Math.DegToRad(GAME_CONFIG.SWORD.ARC_DEGREES / 2);
     const g = this.add.graphics();
-    g.lineStyle(5, 0xf2e9d8, 0.95);
+    g.lineStyle(9, 0xf2e9d8, 0.35);
     g.beginPath();
     g.arc(0, 0, GAME_CONFIG.SWORD.RANGE * 0.75, -halfArc, halfArc, false);
     g.strokePath();
+    g.lineStyle(4, 0xffffff, 0.95);
+    g.beginPath();
+    g.arc(0, 0, GAME_CONFIG.SWORD.RANGE * 0.75, -halfArc, halfArc, false);
+    g.strokePath();
+    g.setBlendMode(Phaser.BlendModes.ADD);
     g.setPosition(attacker.x, attacker.y);
     g.setRotation(attacker.facing);
     g.setDepth(11);
@@ -558,6 +716,24 @@ export class MainScene extends Phaser.Scene {
       ease: "Cubic.easeOut",
       onComplete: () => img.destroy(),
     });
+
+    const sparks = this.add.particles(x, y, "fx-spark", {
+      speed: { min: big ? 120 : 60, max: big ? 340 : 160 },
+      lifespan: { min: 200, max: big ? 600 : 380 },
+      scale: { start: big ? 1.8 : 1.1, end: 0 },
+      alpha: { start: 1, end: 0 },
+      tint: [0xffe08a, 0xff9a3c, 0xffffff],
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false,
+    });
+    this.worldContainer.add(sparks);
+    sparks.explode(big ? 26 : 8);
+    this.time.delayedCall(700, () => sparks.destroy());
+
+    if (big) {
+      this.cameras.main.shake(180, 0.007);
+      this.cameras.main.flash(120, 255, 210, 140);
+    }
   }
 
   /** Floating message used for treasure loot results ("手榴弾を1個獲得！" / "ハズレ..."). */
@@ -767,21 +943,48 @@ export class MainScene extends Phaser.Scene {
 
     if (this.match.isOver && !this.resultText.visible) {
       const winner = this.match.winner!;
+      this.add
+        .rectangle(0, 0, this.scale.width, this.scale.height, 0x05060a, 0.62)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(199);
       this.resultText.setText(winner === "red" ? "RED TEAM WINS" : "BLUE TEAM WINS");
       this.resultText.setColor(`#${TEAM_COLOR[winner].toString(16).padStart(6, "0")}`);
+      this.resultText.setStroke("#0d0f13", 10);
+      this.resultText.setShadow(0, 6, "#000000", 14, true, true);
       this.resultText.setVisible(true);
+      this.resultText.setScale(1.6).setAlpha(0);
+      this.tweens.add({
+        targets: this.resultText,
+        scale: 1,
+        alpha: 1,
+        duration: 420,
+        ease: "Back.easeOut",
+      });
     }
   }
 
   private applyFOVCulling(): void {
     this.fovLayer.clear();
 
+    this.fovLayer.fillStyle(0x05060a, 0.88);
     for (const room of this.labMap.rooms) {
       if (!this.visitedRooms.has(room.id)) {
-        this.fovLayer.fillStyle(0x000000, 0.85);
         this.fovLayer.fillRect(room.x, room.y, room.w, room.h);
       }
     }
+
+    // Door passages between two unexplored rooms should be dark too,
+    // otherwise characters walking through them pop in at full brightness.
+    for (const link of this.labMap.connectorLinks) {
+      if (!this.visitedRooms.has(link.a) && !this.visitedRooms.has(link.b)) {
+        this.fovLayer.fillRect(link.x - 4, link.y - 4, link.w + 8, link.h + 8);
+      }
+    }
+
+    // Late-spawned effects get appended after the FOV layer inside the container,
+    // so re-assert it as the topmost world child every frame.
+    this.worldContainer.bringToTop(this.fovLayer);
   }
 
   /** Only the human player can trigger chests — bots never call tryOpenTreasure, so CPUs can't loot them. */

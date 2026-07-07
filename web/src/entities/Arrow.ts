@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
+import { GAME_CONFIG, TeamId } from "../config";
 
 export class Arrow {
   x: number;
@@ -11,7 +11,7 @@ export class Arrow {
   private vx: number;
   private vy: number;
   private traveled = 0;
-  readonly sprite: Phaser.GameObjects.Rectangle;
+  readonly sprite: Phaser.GameObjects.Image;
 
   constructor(scene: Phaser.Scene, x: number, y: number, angleRad: number, team: TeamId) {
     this.x = x;
@@ -21,7 +21,8 @@ export class Arrow {
     this.vx = Math.cos(angleRad) * GAME_CONFIG.BOW.ARROW_SPEED;
     this.vy = Math.sin(angleRad) * GAME_CONFIG.BOW.ARROW_SPEED;
 
-    this.sprite = scene.add.rectangle(x, y, 16, 3, TEAM_COLOR[team]);
+    // Team-fletched arrow texture generated at startup (see TextureFactory).
+    this.sprite = scene.add.image(x, y, `arrow-${team}`);
     this.sprite.setRotation(angleRad);
     this.sprite.setDepth(6);
   }

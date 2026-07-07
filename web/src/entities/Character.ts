@@ -26,10 +26,13 @@ export class Character {
   private knockbackVY = 0;
   private swordReadyAt = 0;
   private bowReadyAt = 0;
+  private walkPhase = 0;
 
   private scene: Phaser.Scene;
   private map: LabMap;
   readonly container: Phaser.GameObjects.Container;
+  private portrait: Phaser.GameObjects.Image;
+  private shadow: Phaser.GameObjects.Ellipse;
   private weaponSprite: Phaser.GameObjects.Image;
   private weaponEmoji: Phaser.GameObjects.Text;
   private hpBarFill: Phaser.GameObjects.Rectangle;
@@ -42,12 +45,15 @@ export class Character {
     this.x = x;
     this.y = y;
 
+    // Soft drop shadow grounds the character on the floor.
+    this.shadow = scene.add.ellipse(0, this.radius - 2, this.radius * 2.2, this.radius * 0.8, 0x000000, 0.32);
+
     // Colored medallion behind the portrait sprite doubles as the team indicator
     // (the sprite art itself is the same for both teams).
     const teamRing = scene.add.circle(0, 0, this.radius + 6, TEAM_COLOR[team]);
     teamRing.setStrokeStyle(3, isHuman ? 0xf6e58d : 0x1b1f27, isHuman ? 1 : 0.6);
 
-    const portrait = scene.add.image(0, 0, "character-sprite").setScale(this.radius * 2 / 16);
+    this.portrait = scene.add.image(0, 0, "character-sprite").setScale((this.radius * 2) / 16);
 
     this.weaponSprite = scene.add.image(0, 0, "sword-icon").setScale(1.6);
     this.weaponEmoji = scene.add.text(0, 0, "🏹", { fontSize: "18px" }).setOrigin(0.5);
@@ -56,8 +62,9 @@ export class Character {
     this.hpBarFill = scene.add.rectangle(-20, -this.radius - 12, 40, 6, 0x63c964).setOrigin(0, 0.5);
 
     const children: Phaser.GameObjects.GameObject[] = [
+      this.shadow,
       teamRing,
-      portrait,
+      this.portrait,
       this.weaponSprite,
       this.weaponEmoji,
       hpBarBg,
@@ -119,16 +126,73 @@ export class Character {
     const angle = Math.atan2(this.y - fromY, this.x - fromX);
     this.knockbackVX = Math.cos(angle) * GAME_CONFIG.SWORD.KNOCKBACK;
     this.knockbackVY = Math.sin(angle) * GAME_CONFIG.SWORD.KNOCKBACK;
+
+    this.flashOnHit();
+    this.spawnDamageNumber(amount);
+
     if (this.hp <= 0) {
       this.hp = 0;
       this.die();
     }
   }
 
+  /** Brief white flash — the classic "I just got hit" readability cue. */
+  private flashOnHit(): void {
+    this.portrait.setTintFill(0xffffff);
+    this.scene.time.delayedCall(90, () => {
+      if (this.portrait.active) this.portrait.clearTint();
+    });
+  }
+
+  /** FF-style floating damage number rising above the head. */
+  private spawnDamageNumber(amount: number): void {
+    const parent = this.container.parentContainer;
+    if (!parent) return;
+    const t = this.scene.add
+      .text(this.x + (Math.random() - 0.5) * 16, this.y - this.radius - 14, `${amount}`, {
+        fontFamily: "georgia, serif",
+        fontSize: "20px",
+        color: "#ffe08a",
+        fontStyle: "bold",
+        stroke: "#241a05",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5);
+    parent.add(t);
+    this.scene.tweens.add({
+      targets: t,
+      y: t.y - 34,
+      alpha: { from: 1, to: 0 },
+      scale: { from: 1.15, to: 0.9 },
+      duration: 700,
+      ease: "Cubic.easeOut",
+      onComplete: () => t.destroy(),
+    });
+  }
+
   private die(): void {
     this.alive = false;
+    this.spawnDeathBurst();
     this.container.setVisible(false);
     this.respawnAt = this.scene.time.now + GAME_CONFIG.RESPAWN_DELAY_MS;
+  }
+
+  /** Team-colored spark burst where the character fell. */
+  private spawnDeathBurst(): void {
+    const parent = this.container.parentContainer;
+    if (!parent) return;
+    const emitter = this.scene.add.particles(this.x, this.y, "fx-spark", {
+      speed: { min: 60, max: 200 },
+      lifespan: { min: 250, max: 550 },
+      scale: { start: 1.4, end: 0 },
+      alpha: { start: 1, end: 0 },
+      tint: [TEAM_COLOR[this.team], 0xffffff],
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false,
+    });
+    parent.add(emitter);
+    emitter.explode(18);
+    this.scene.time.delayedCall(700, () => emitter.destroy());
   }
 
   respawn(x: number, y: number): void {
@@ -143,6 +207,24 @@ export class Character {
     this.grenadeCount = 0;
     this.container.setVisible(true);
     this.container.setPosition(x, y);
+    this.spawnRespawnRing();
+  }
+
+  /** Expanding team-colored ring so respawns read clearly at the base. */
+  private spawnRespawnRing(): void {
+    const parent = this.container.parentContainer;
+    if (!parent) return;
+    const ring = this.scene.add.circle(this.x, this.y, this.radius + 4, TEAM_COLOR[this.team], 0);
+    ring.setStrokeStyle(4, TEAM_COLOR[this.team], 0.9);
+    parent.add(ring);
+    this.scene.tweens.add({
+      targets: ring,
+      scale: { from: 0.4, to: 2.2 },
+      alpha: { from: 1, to: 0 },
+      duration: 450,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
   }
 
   update(dtSeconds: number): void {
@@ -176,6 +258,17 @@ export class Character {
     }
 
     this.container.setPosition(this.x, this.y);
+
+    // Walk bob: hop the portrait while moving, keep the shadow planted.
+    const moving = Math.abs(this.moveDirX) + Math.abs(this.moveDirY) > 0.01;
+    if (moving) {
+      this.walkPhase += dtSeconds * 12;
+    } else {
+      this.walkPhase = 0;
+    }
+    const bob = Math.abs(Math.sin(this.walkPhase)) * 3;
+    this.portrait.setY(-bob);
+    this.shadow.setScale(1 - bob * 0.03);
 
     const handDist = this.radius + 10;
     const handX = Math.cos(this.facing) * handDist;

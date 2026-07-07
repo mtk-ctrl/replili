@@ -3,6 +3,9 @@ import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
 
 export type FlagOwner = TeamId | "neutral";
 
+const NEUTRAL_COLOR = 0xcfc7b4;
+
+/** A capture point rendered as an actual flag: pole, waving banner, and an owner-colored glow. */
 export class Flag {
   readonly x: number;
   readonly y: number;
@@ -11,17 +14,42 @@ export class Flag {
 
   private capturingTeam: TeamId | null = null;
   private progress = 0;
-  readonly gfx: Phaser.GameObjects.Graphics;
+  private waveTime = 0;
+
+  readonly container: Phaser.GameObjects.Container;
+  private readonly gfx: Phaser.GameObjects.Graphics;
+  private readonly glow: Phaser.GameObjects.Image;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     this.x = x;
     this.y = y;
+
+    this.glow = scene.add
+      .image(0, -10, "fx-glow")
+      .setScale(1.5)
+      .setAlpha(0.22)
+      .setTint(NEUTRAL_COLOR)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
     this.gfx = scene.add.graphics();
-    this.gfx.setDepth(5);
+    this.container = scene.add.container(x, y, [this.glow, this.gfx]);
+    this.container.setDepth(5);
+
+    scene.tweens.add({
+      targets: this.glow,
+      alpha: { from: 0.16, to: 0.3 },
+      scale: { from: 1.35, to: 1.65 },
+      duration: 1100,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+
     this.redraw();
   }
 
   update(dtSeconds: number, teamsPresent: Record<TeamId, boolean>): void {
+    this.waveTime += dtSeconds;
     const bothPresent = teamsPresent.red && teamsPresent.blue;
     if (!bothPresent) {
       if (teamsPresent.red) this.progressTowards("red", dtSeconds);
@@ -52,32 +80,69 @@ export class Flag {
     const g = this.gfx;
     g.clear();
 
-    g.lineStyle(3, 0xf2e9d8, 0.9);
-    g.strokeCircle(this.x, this.y, this.radius);
+    const color = this.owner === "neutral" ? NEUTRAL_COLOR : TEAM_COLOR[this.owner];
+    this.glow.setTint(color);
 
-    const color = this.owner === "neutral" ? 0xc9c2b2 : TEAM_COLOR[this.owner];
+    // Base plinth + pole shadow
+    g.fillStyle(0x000000, 0.3);
+    g.fillEllipse(3, 12, 30, 9);
+    g.fillStyle(0x4a4f59, 1);
+    g.fillEllipse(0, 9, 24, 8);
+    g.fillStyle(0x5d636e, 1);
+    g.fillEllipse(0, 7, 18, 6);
+
+    // Pole with highlight and gold finial
+    g.fillStyle(0x3a3f47, 1);
+    g.fillRect(-2, -44, 4, 52);
+    g.fillStyle(0x8b929e, 1);
+    g.fillRect(-2, -44, 1.5, 52);
+    g.fillStyle(0xd4af37, 1);
+    g.fillCircle(0, -46, 3.5);
+
+    // Waving banner: sampled ribbon from the pole top, rippled by time
+    const BANNER_W = 30;
+    const BANNER_H = 18;
+    const SEGMENTS = 10;
+    const top: { x: number; y: number }[] = [];
+    const bottom: { x: number; y: number }[] = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const t = i / SEGMENTS;
+      const wx = 2 + t * BANNER_W;
+      const ripple = Math.sin(this.waveTime * 5 - t * 4) * 2.6 * t;
+      top.push({ x: wx, y: -44 + ripple });
+      bottom.push({ x: wx, y: -44 + BANNER_H * (1 - t * 0.25) + ripple });
+    }
+
     g.fillStyle(color, 1);
-    g.fillCircle(this.x, this.y, 16);
-    g.lineStyle(2, 0x1b1f27, 0.8);
-    g.strokeCircle(this.x, this.y, 16);
+    g.beginPath();
+    g.moveTo(top[0].x, top[0].y);
+    for (const p of top) g.lineTo(p.x, p.y);
+    for (let i = bottom.length - 1; i >= 0; i--) g.lineTo(bottom[i].x, bottom[i].y);
+    g.closePath();
+    g.fillPath();
 
+    // Banner shading: darker underside strip for cloth depth
+    g.fillStyle(0x000000, 0.18);
+    g.beginPath();
+    g.moveTo(bottom[0].x, bottom[0].y - 4);
+    for (const p of bottom) g.lineTo(p.x, p.y - 4);
+    for (let i = bottom.length - 1; i >= 0; i--) g.lineTo(bottom[i].x, bottom[i].y);
+    g.closePath();
+    g.fillPath();
+
+    // Capture progress ring
     if (this.capturingTeam) {
       const ratio = this.progress / 100;
+      g.lineStyle(3, 0x0d0f13, 0.5);
+      g.strokeCircle(0, 0, this.radius - 6);
       g.lineStyle(6, TEAM_COLOR[this.capturingTeam], 0.9);
       g.beginPath();
-      g.arc(
-        this.x,
-        this.y,
-        this.radius - 6,
-        Phaser.Math.DegToRad(-90),
-        Phaser.Math.DegToRad(-90 + 360 * ratio),
-        false
-      );
+      g.arc(0, 0, this.radius - 6, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + 360 * ratio), false);
       g.strokePath();
     }
   }
 
   destroy(): void {
-    this.gfx.destroy();
+    this.container.destroy();
   }
 }
