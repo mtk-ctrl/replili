@@ -304,6 +304,12 @@ export class MainScene extends Phaser.Scene {
     keyboard.addKey("THREE").on("down", () => {
       if (this.player.grenadeCount > 0) this.player.switchWeapon("grenade");
     });
+    keyboard.addKey("FOUR").on("down", () => {
+      if (this.player.katanaCount > 0) this.player.switchWeapon("katana");
+    });
+    keyboard.addKey("FIVE").on("down", () => {
+      if (this.player.mineCount > 0) this.player.switchWeapon("grenade"); // Use grenade slot for mine
+    });
 
     keyboard.addKey("E").on("down", () => this.tryOpenTreasure());
 
@@ -321,6 +327,9 @@ export class MainScene extends Phaser.Scene {
           const target = this.screenToWorld(pointer.x, pointer.y);
           this.throwGrenade(this.player, target.x, target.y);
         }
+      } else if (this.player.weapon === "katana") {
+        if (this.player.startKatanaSwing(this.time.now)) this.applyKatanaHit(this.player);
+      }
       }
     });
   }
@@ -787,6 +796,24 @@ export class MainScene extends Phaser.Scene {
       const diff = Phaser.Math.Angle.Wrap(angleTo - attacker.facing);
       if (Math.abs(diff) > halfArc) continue;
       enemy.applyDamage(GAME_CONFIG.SWORD.DAMAGE, attacker.x, attacker.y);
+      this.spawnHitEffect(enemy.x, enemy.y);
+    }
+  }
+
+  private applyKatanaHit(attacker: Character): void {
+    this.spawnSlashEffect(attacker);
+
+    const halfArc = Phaser.Math.DegToRad(GAME_CONFIG.KATANA.ARC_DEGREES / 2);
+    for (const enemy of this.enemiesOf(attacker.team)) {
+      if (!enemy.alive) continue;
+      const dx = enemy.x - attacker.x;
+      const dy = enemy.y - attacker.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > GAME_CONFIG.KATANA.RANGE) continue;
+      const angleTo = Math.atan2(dy, dx);
+      const diff = Phaser.Math.Angle.Wrap(angleTo - attacker.facing);
+      if (Math.abs(diff) > halfArc) continue;
+      enemy.applyDamage(GAME_CONFIG.KATANA.DAMAGE, attacker.x, attacker.y);
       this.spawnHitEffect(enemy.x, enemy.y);
     }
   }
