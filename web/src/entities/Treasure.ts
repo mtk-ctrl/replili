@@ -72,10 +72,7 @@ export class Treasure {
   private rollItemType(): ItemType {
     const rand = Math.random();
     const rates = GAME_CONFIG.ITEM_DROP_RATES;
-    if (rand < rates.grenade) return "grenade";
-    if (rand < rates.grenade + rates.potion_swift) return "potion_swift";
-    if (rand < rates.grenade + rates.potion_swift + rates.katana) return "katana";
-    return "mine";
+    return rand < rates.grenade ? "grenade" : "potion_swift";
   }
 
   setIndicatorVisible(visible: boolean): void {

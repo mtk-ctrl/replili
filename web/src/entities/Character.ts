@@ -19,9 +19,9 @@ export class Character {
   weapon: WeaponType = "sword";
   grenadeCount = 0;
   katanaCount = 0;
-  katanaUsesRemaining = 0;
-  mineCount = 0;
   potionSwiftEndTime = 0;
+  ironCount = 0;
+  stickCount = 0;
 
   moveDirX = 0;
   moveDirY = 0;
@@ -120,10 +120,9 @@ export class Character {
 
   startKatanaSwing(now: number): boolean {
     if (!this.alive) return false;
-    if (this.katanaUsesRemaining <= 0) return false;
+    if (this.katanaCount <= 0) return false;
     if (now < this.katanaReadyAt) return false;
     this.katanaReadyAt = now + GAME_CONFIG.KATANA.COOLDOWN_MS;
-    this.katanaUsesRemaining--;
     return true;
   }
 
@@ -151,16 +150,21 @@ export class Character {
 
   addKatana(): void {
     this.katanaCount++;
-    this.katanaUsesRemaining = GAME_CONFIG.KATANA.MAX_USES;
   }
 
-  addPotionSwift(): void {
+  addIron(amount: number): void {
+    this.ironCount += amount;
+  }
+
+  addStick(amount: number): void {
+    this.stickCount += amount;
+  }
+
+  /** Stacks on top of any remaining duration rather than resetting it. */
+  addPotionSwift(durationMs: number): void {
     const now = this.scene.time.now;
-    this.potionSwiftEndTime = now + GAME_CONFIG.POTION_SWIFT.DURATION_MS;
-  }
-
-  addMine(): void {
-    this.mineCount++;
+    const base = Math.max(now, this.potionSwiftEndTime);
+    this.potionSwiftEndTime = base + durationMs;
   }
 
   applyDamage(amount: number, fromX: number, fromY: number): void {
@@ -249,7 +253,6 @@ export class Character {
     this.bowReadyAt = 0;
     this.katanaReadyAt = 0;
     this.grenadeCount = 0;
-    this.mineCount = 0;
     this.container.setVisible(true);
     this.container.setPosition(x, y);
     this.spawnRespawnRing();

@@ -1,6 +1,8 @@
 export type TeamId = "red" | "blue";
 export type GameMode = "normal" | "extended";
-export type ItemType = "grenade" | "potion_swift" | "katana" | "mine";
+/** What a treasure chest can contain. Katana is craft-only now, not a chest drop. */
+export type ItemType = "grenade" | "potion_swift";
+export type MaterialType = "iron" | "stick";
 
 export const OTHER_TEAM: Record<TeamId, TeamId> = {
   red: "blue",
@@ -12,19 +14,46 @@ export const TEAM_COLOR: Record<TeamId, number> = {
   blue: 0x2f7fb3,
 };
 
-// Game mode configurations
-export const GAME_MODE_CONFIG: Record<GameMode, any> = {
+interface ModeConfig {
+  MATCH_SECONDS: number;
+  GRID_COLS: number;
+  GRID_ROWS: number;
+  CELL_SCALE: number;
+  FLAG_COUNT: number;
+  TREASURE_COUNT: number;
+  STORAGE_COUNT: number;
+  WORKBENCH_COUNT: number;
+  LUMBER_COUNT: number;
+  POTION_DURATION_MS: number;
+}
+
+// Game mode configurations.
+// Extended mode keeps rooms ~1.5x the normal size (CELL_SCALE) but uses a bigger
+// grid with more rooms, so total floor area ends up ~4x rather than each room being 4x.
+export const GAME_MODE_CONFIG: Record<GameMode, ModeConfig> = {
   normal: {
     MATCH_SECONDS: 180,
-    MAP_SCALE: 1,
+    GRID_COLS: 7,
+    GRID_ROWS: 7,
+    CELL_SCALE: 1,
     FLAG_COUNT: 5,
     TREASURE_COUNT: 4,
+    STORAGE_COUNT: 3,
+    WORKBENCH_COUNT: 2,
+    LUMBER_COUNT: 6,
+    POTION_DURATION_MS: 20000,
   },
   extended: {
     MATCH_SECONDS: 600,
-    MAP_SCALE: 4,
+    GRID_COLS: 9,
+    GRID_ROWS: 10,
+    CELL_SCALE: 1.5,
     FLAG_COUNT: 9,
     TREASURE_COUNT: 12,
+    STORAGE_COUNT: 8,
+    WORKBENCH_COUNT: 5,
+    LUMBER_COUNT: 16,
+    POTION_DURATION_MS: 60000,
   },
 };
 
@@ -51,24 +80,20 @@ export const GAME_CONFIG = {
   },
 
   KATANA: {
-    DAMAGE: 30,
+    DAMAGE: 30, // 1.5x sword
     COOLDOWN_MS: 3500,
-    RANGE: 156,
+    RANGE: 156, // 2x sword
     ARC_DEGREES: 110,
     KNOCKBACK: 260,
-    MAX_USES: 10,
+    CRAFT_MATERIALS: { iron: 3, stick: 2 },
   },
 
   POTION_SWIFT: {
-    DURATION_MS: 60000,
     SPEED_MULTIPLIER: 2.5,
   },
 
-  MINE: {
-    RADIUS: 18,
-    BLAST_RADIUS: 54,
-    DAMAGE: 75,
-  },
+  STORAGE_IRON_AMOUNT: 2,
+  LUMBER_STICK_AMOUNT: 2,
 
   RESPAWN_DELAY_MS: 3000,
 
@@ -76,9 +101,7 @@ export const GAME_CONFIG = {
   FLAG_CAPTURE_SECONDS: 3,
 
   ITEM_DROP_RATES: {
-    grenade: 0.1,
-    potion_swift: 0.3,
-    katana: 0.4,
-    mine: 0.2,
+    grenade: 0.6,
+    potion_swift: 0.4,
   },
 };

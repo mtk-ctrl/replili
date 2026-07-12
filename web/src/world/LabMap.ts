@@ -32,16 +32,16 @@ export interface Room {
   doors: Door[];
 }
 
-const GRID_COLS = 7;
-const GRID_ROWS = 7;
+const BASE_GRID_COLS = 7;
+const BASE_GRID_ROWS = 7;
 const BASE_CELL_W = 320;
 const BASE_CELL_H = 240;
 const WALL_PAD = 12;
 const HALL_PAD = 4;
 const DOOR_SIZE = 52;
 const EXTRA_EDGE_CHANCE = 0.2;
-const HALL_COUNT = 3;
-const CORRIDOR3_COUNT = 6;
+const BASE_HALL_COUNT = 3;
+const BASE_CORRIDOR3_COUNT = 6;
 
 function mulberry32(seed: number) {
   return function random() {
@@ -68,13 +68,33 @@ interface CellEdge {
   dir: "east" | "south";
 }
 
+export interface LabMapOptions {
+  gridCols?: number;
+  gridRows?: number;
+  cellScale?: number;
+  treasureCount?: number;
+  storageCount?: number;
+  workbenchCount?: number;
+  lumberCount?: number;
+}
+
 export class LabMap {
   readonly width: number;
   readonly height: number;
   private readonly cellW: number;
   private readonly cellH: number;
+  private readonly gridCols: number;
+  private readonly gridRows: number;
+  private readonly hallCount: number;
+  private readonly corridor3Count: number;
   readonly flagSpawns: Point[] = [];
   readonly treasureSpawns: Point[] = [];
+  /** Openable furniture that grants iron (E to open). */
+  readonly storageSpawns: Point[] = [];
+  /** Crafting stations (E to open the craft menu). */
+  readonly workbenchSpawns: Point[] = [];
+  /** Small pickup piles near room edges that grant wooden sticks (E to pick up). */
+  readonly lumberSpawns: Point[] = [];
   /** Wall-torch positions gathered during render; MainScene attaches animated flames/glows here. */
   readonly torchSpawns: Point[] = [];
   readonly baseSpawns: Record<TeamId, Point>;
@@ -87,24 +107,41 @@ export class LabMap {
   private nodePos: Point[] = [];
   private adjacency: number[][] = [];
 
-  /** areaScale=4 (the "拡張" mode) doubles each linear dimension so total floor area is ~4x. */
-  constructor(seed = 20260706, areaScale = 1, desiredTreasureCount = 4) {
-    const linearScale = Math.sqrt(areaScale);
-    this.cellW = BASE_CELL_W * linearScale;
-    this.cellH = BASE_CELL_H * linearScale;
-    this.width = GRID_COLS * this.cellW;
-    this.height = GRID_ROWS * this.cellH;
+  /**
+   * Extended mode keeps cellScale modest (~1.5x room size) but grows the grid
+   * (more rooms) so the total floor area still ends up ~4x normal.
+   */
+  constructor(seed = 20260706, options: LabMapOptions = {}) {
+    const {
+      gridCols = BASE_GRID_COLS,
+      gridRows = BASE_GRID_ROWS,
+      cellScale = 1,
+      treasureCount = 4,
+      storageCount = 3,
+      workbenchCount = 2,
+      lumberCount = 6,
+    } = options;
+
+    this.gridCols = gridCols;
+    this.gridRows = gridRows;
+    this.cellW = BASE_CELL_W * cellScale;
+    this.cellH = BASE_CELL_H * cellScale;
+    this.width = gridCols * this.cellW;
+    this.height = gridRows * this.cellH;
+    const cellCountRatio = (gridCols * gridRows) / (BASE_GRID_COLS * BASE_GRID_ROWS);
+    this.hallCount = Math.max(1, Math.round(BASE_HALL_COUNT * cellCountRatio));
+    this.corridor3Count = Math.max(1, Math.round(BASE_CORRIDOR3_COUNT * cellCountRatio));
 
     const rng = mulberry32(seed);
-    const cellId = (col: number, row: number) => row * GRID_COLS + col;
-    const centerCol = Math.floor(GRID_COLS / 2);
-    const centerRow = Math.floor(GRID_ROWS / 2);
+    const cellId = (col: number, row: number) => row * this.gridCols + col;
+    const centerCol = Math.floor(this.gridCols / 2);
+    const centerRow = Math.floor(this.gridRows / 2);
     const reservedCellIds = new Set<number>([
       cellId(0, 0),
-      cellId(GRID_COLS - 1, GRID_ROWS - 1),
-      cellId(GRID_COLS - 1, 0),
+      cellId(this.gridCols - 1, this.gridRows - 1),
+      cellId(this.gridCols - 1, 0),
       cellId(centerCol, centerRow),
-      cellId(0, GRID_ROWS - 1),
+      cellId(0, this.gridRows - 1),
     ]);
 
     const { cellToBlock, blocks } = this.buildBlocks(rng, reservedCellIds);
@@ -113,15 +150,25 @@ export class LabMap {
     this.setupPathfinding();
 
     const redBlock = cellToBlock[cellId(0, 0)];
-    const blueBlock = cellToBlock[cellId(GRID_COLS - 1, GRID_ROWS - 1)];
+    const blueBlock = cellToBlock[cellId(this.gridCols - 1, this.gridRows - 1)];
     this.baseSpawns = {
       red: { x: this.rooms[redBlock].x + this.rooms[redBlock].w / 2, y: this.rooms[redBlock].y + this.rooms[redBlock].h / 2 },
       blue: { x: this.rooms[blueBlock].x + this.rooms[blueBlock].w / 2, y: this.rooms[blueBlock].y + this.rooms[blueBlock].h / 2 },
     };
 
     // Select flag spawn locations from reserved cells (excluding team spawns)
-    const teamSpawns = new Set([cellId(0, 0), cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
-    const availableFlagCells = [cellId(GRID_COLS - 1, 0), cellId(centerCol, centerRow), cellId(0, GRID_ROWS - 1), cellId(GRID_COLS - 1, centerRow), cellId(centerCol, GRID_ROWS - 1), cellId(1, 1), cellId(GRID_COLS - 2, 1), cellId(1, GRID_ROWS - 2), cellId(GRID_COLS - 2, GRID_ROWS - 2)];
+    const teamSpawns = new Set([cellId(0, 0), cellId(this.gridCols - 1, this.gridRows - 1)]);
+    const availableFlagCells = [
+      cellId(this.gridCols - 1, 0),
+      cellId(centerCol, centerRow),
+      cellId(0, this.gridRows - 1),
+      cellId(this.gridCols - 1, centerRow),
+      cellId(centerCol, this.gridRows - 1),
+      cellId(1, 1),
+      cellId(this.gridCols - 2, 1),
+      cellId(1, this.gridRows - 2),
+      cellId(this.gridCols - 2, this.gridRows - 2),
+    ];
     for (let i = 0; i < Math.min(9, availableFlagCells.length); i++) {
       const fcid = availableFlagCells[i];
       if (!teamSpawns.has(fcid)) {
@@ -130,21 +177,53 @@ export class LabMap {
       }
     }
 
-    // Place treasures in random rooms (not reserved spawn/flag rooms)
+    // Everything else (treasure/storage/workbench/lumber) scatters across rooms
+    // that aren't team bases or flag rooms. Categories may share a room.
     const reservedRoomIds = new Set(availableFlagCells.map(fcid => cellToBlock[fcid]));
     reservedRoomIds.add(cellToBlock[cellId(0, 0)]);
-    reservedRoomIds.add(cellToBlock[cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
-    const treasureRooms = this.rooms.filter(r => !reservedRoomIds.has(r.id));
+    reservedRoomIds.add(cellToBlock[cellId(this.gridCols - 1, this.gridRows - 1)]);
+    const openRooms = this.rooms.filter(r => !reservedRoomIds.has(r.id) && r.flavor !== "corridor");
+
     const treasureRng = mulberry32(seed + 7777);
-    const treasureCount = Math.min(desiredTreasureCount, treasureRooms.length);
-    for (let i = 0; i < treasureCount && treasureRooms.length > 0; i++) {
-      const idx = Math.floor(treasureRng() * treasureRooms.length);
-      const room = treasureRooms[idx];
-      const offsetX = (treasureRng() - 0.5) * Math.min(room.w, 80);
-      const offsetY = (treasureRng() - 0.5) * Math.min(room.h, 80);
-      this.treasureSpawns.push({ x: room.x + room.w / 2 + offsetX, y: room.y + room.h / 2 + offsetY });
-      treasureRooms.splice(idx, 1);
+    this.treasureSpawns.push(...this.scatterInRooms(treasureRng, openRooms, treasureCount, false));
+
+    const storageRng = mulberry32(seed + 8888);
+    this.storageSpawns.push(...this.scatterInRooms(storageRng, openRooms, storageCount, false));
+
+    const workbenchRng = mulberry32(seed + 9999);
+    this.workbenchSpawns.push(...this.scatterInRooms(workbenchRng, openRooms, workbenchCount, false));
+
+    const lumberRng = mulberry32(seed + 11111);
+    this.lumberSpawns.push(...this.scatterInRooms(lumberRng, openRooms, lumberCount, true));
+  }
+
+  /** Scatters `count` points across rooms (recycling the pool once exhausted). edgeBias hugs a room wall instead of the center. */
+  private scatterInRooms(rng: () => number, roomPool: Room[], count: number, edgeBias: boolean): Point[] {
+    const points: Point[] = [];
+    if (roomPool.length === 0) return points;
+
+    let available = [...roomPool];
+    for (let i = 0; i < count; i++) {
+      if (available.length === 0) available = [...roomPool];
+      const idx = Math.floor(rng() * available.length);
+      const room = available.splice(idx, 1)[0];
+
+      if (edgeBias) {
+        const margin = 36;
+        const edge = Math.floor(rng() * 4);
+        const spanX = Math.max(1, room.w - margin * 2);
+        const spanY = Math.max(1, room.h - margin * 2);
+        if (edge === 0) points.push({ x: room.x + margin + rng() * spanX, y: room.y + margin });
+        else if (edge === 1) points.push({ x: room.x + margin + rng() * spanX, y: room.y + room.h - margin });
+        else if (edge === 2) points.push({ x: room.x + margin, y: room.y + margin + rng() * spanY });
+        else points.push({ x: room.x + room.w - margin, y: room.y + margin + rng() * spanY });
+      } else {
+        const offsetX = (rng() - 0.5) * Math.min(room.w, 80);
+        const offsetY = (rng() - 0.5) * Math.min(room.h, 80);
+        points.push({ x: room.x + room.w / 2 + offsetX, y: room.y + room.h / 2 + offsetY });
+      }
     }
+    return points;
   }
 
   /** Partitions the grid into single cells plus a handful of merged 2x2 halls and 1x3/3x1 corridors for size variety. */
@@ -152,10 +231,10 @@ export class LabMap {
     rng: () => number,
     reservedCellIds: Set<number>
   ): { cellToBlock: number[]; blocks: Block[] } {
-    const totalCells = GRID_COLS * GRID_ROWS;
+    const totalCells = this.gridCols * this.gridRows;
     const cellToBlock = new Array<number>(totalCells).fill(-1);
     const blocks: Block[] = [];
-    const cellId = (col: number, row: number) => row * GRID_COLS + col;
+    const cellId = (col: number, row: number) => row * this.gridCols + col;
 
     const tryPlace = (cells: { col: number; row: number }[], kind: BlockKind): boolean => {
       // Reserved cells (spawns/flags) may only ever end up as their own 1x1 room —
@@ -173,9 +252,9 @@ export class LabMap {
     };
 
     let hallsPlaced = 0;
-    for (let attempts = 0; hallsPlaced < HALL_COUNT && attempts < 400; attempts++) {
-      const col = Math.floor(rng() * (GRID_COLS - 1));
-      const row = Math.floor(rng() * (GRID_ROWS - 1));
+    for (let attempts = 0; hallsPlaced < this.hallCount && attempts < 400; attempts++) {
+      const col = Math.floor(rng() * (this.gridCols - 1));
+      const row = Math.floor(rng() * (this.gridRows - 1));
       const cells = [
         { col, row },
         { col: col + 1, row },
@@ -186,20 +265,20 @@ export class LabMap {
     }
 
     let corridorsPlaced = 0;
-    for (let attempts = 0; corridorsPlaced < CORRIDOR3_COUNT && attempts < 600; attempts++) {
+    for (let attempts = 0; corridorsPlaced < this.corridor3Count && attempts < 600; attempts++) {
       const horizontal = rng() < 0.5;
       let cells: { col: number; row: number }[];
       if (horizontal) {
-        const col = Math.floor(rng() * (GRID_COLS - 2));
-        const row = Math.floor(rng() * GRID_ROWS);
+        const col = Math.floor(rng() * (this.gridCols - 2));
+        const row = Math.floor(rng() * this.gridRows);
         cells = [
           { col, row },
           { col: col + 1, row },
           { col: col + 2, row },
         ];
       } else {
-        const col = Math.floor(rng() * GRID_COLS);
-        const row = Math.floor(rng() * (GRID_ROWS - 2));
+        const col = Math.floor(rng() * this.gridCols);
+        const row = Math.floor(rng() * (this.gridRows - 2));
         cells = [
           { col, row },
           { col, row: row + 1 },
@@ -209,8 +288,8 @@ export class LabMap {
       if (tryPlace(cells, "corridor3")) corridorsPlaced++;
     }
 
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
+    for (let row = 0; row < this.gridRows; row++) {
+      for (let col = 0; col < this.gridCols; col++) {
         if (cellToBlock[cellId(col, row)] === -1) {
           tryPlace([{ col, row }], "single");
         }
@@ -222,15 +301,15 @@ export class LabMap {
 
   /** Randomized Prim's spanning tree over the block-adjacency graph, plus a few extra loop edges so routes aren't single-file. */
   private buildMaze(rng: () => number, cellToBlock: number[], blockCount: number): CellEdge[] {
-    const cellId = (col: number, row: number) => row * GRID_COLS + col;
+    const cellId = (col: number, row: number) => row * this.gridCols + col;
     const candidateEdges: CellEdge[] = [];
     const seenPairs = new Set<string>();
 
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
+    for (let row = 0; row < this.gridRows; row++) {
+      for (let col = 0; col < this.gridCols; col++) {
         const blockHere = cellToBlock[cellId(col, row)];
 
-        if (col < GRID_COLS - 1) {
+        if (col < this.gridCols - 1) {
           const rightBlock = cellToBlock[cellId(col + 1, row)];
           if (rightBlock !== blockHere) {
             const key = `${Math.min(blockHere, rightBlock)}-${Math.max(blockHere, rightBlock)}`;
@@ -241,7 +320,7 @@ export class LabMap {
           }
         }
 
-        if (row < GRID_ROWS - 1) {
+        if (row < this.gridRows - 1) {
           const downBlock = cellToBlock[cellId(col, row + 1)];
           if (downBlock !== blockHere) {
             const key = `${Math.min(blockHere, downBlock)}-${Math.max(blockHere, downBlock)}`;

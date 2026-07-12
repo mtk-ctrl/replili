@@ -19,6 +19,8 @@ const RANDOM_TARGET_CHANCE = 0.3;
 const TARGET_REROLL_MIN_MS = 3000;
 const TARGET_REROLL_JITTER_MS = 3000;
 const TARGET_JITTER_RADIUS = 55;
+const STRAFE_CHANGE_MIN_MS = 500;
+const STRAFE_CHANGE_JITTER_MS = 700;
 
 /** Decision loop for a bot: mostly pushes toward contestable flags, only fights what it can actually see, sometimes ignores a fight to stay on task, and backs off when hurt. */
 export class BotAI {
@@ -30,6 +32,9 @@ export class BotAI {
   private targetJitterY = 0;
   private nextEngageDecisionAt = 0;
   private willEngageCurrentFight = true;
+  private nextStrafeChangeAt = 0;
+  private strafeDir = 1;
+  private strafeApproach = 0;
 
   constructor(
     private character: Character,
@@ -82,21 +87,41 @@ export class BotAI {
     const self = this.character;
     const dx = enemy.x - self.x;
     const dy = enemy.y - self.y;
-    const dist = Math.hypot(dx, dy);
+    const dist = Math.hypot(dx, dy) || 1;
     self.facing = Math.atan2(dy, dx);
 
     if (dist <= SWORD_ENGAGE_RANGE) {
-      self.moveDirX = 0;
-      self.moveDirY = 0;
+      this.applyDodgeMovement(now, dx, dy, dist);
       if (self.startSwordSwing(now)) applySwordHit(self);
     } else if (dist <= BOW_ENGAGE_RANGE) {
-      self.moveDirX = 0;
-      self.moveDirY = 0;
+      this.applyDodgeMovement(now, dx, dy, dist);
       if (self.fireBow(now)) fireBow(self, self.facing);
     } else {
       self.moveDirX = dx / dist;
       self.moveDirY = dy / dist;
     }
+  }
+
+  /** Keeps a bot circling/strafing its target instead of freezing in place while it fights — avoids the "glued to a corner" look. */
+  private applyDodgeMovement(now: number, dx: number, dy: number, dist: number): void {
+    const self = this.character;
+
+    if (now >= this.nextStrafeChangeAt) {
+      this.nextStrafeChangeAt = now + STRAFE_CHANGE_MIN_MS + Math.random() * STRAFE_CHANGE_JITTER_MS;
+      this.strafeDir = Math.random() < 0.5 ? -1 : 1;
+      this.strafeApproach = (Math.random() - 0.5) * 0.7;
+    }
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const px = -ny * this.strafeDir;
+    const py = nx * this.strafeDir;
+
+    let mvx = px + nx * this.strafeApproach;
+    let mvy = py + ny * this.strafeApproach;
+    const len = Math.hypot(mvx, mvy) || 1;
+    self.moveDirX = mvx / len;
+    self.moveDirY = mvy / len;
   }
 
   private flee(now: number, enemy: Character, fireBow: (shooter: Character, angle: number) => void): void {

@@ -9,10 +9,16 @@ import { BotAI } from "../entities/BotAI";
 import { MatchManager } from "../match/MatchManager";
 import { Minimap } from "../ui/Minimap";
 import { Treasure } from "../entities/Treasure";
-import { Potion } from "../entities/Potion";
-import { Katana } from "../entities/Katana";
-import { Mine } from "../entities/Mine";
+import { Storage } from "../entities/Storage";
+import { Workbench } from "../entities/Workbench";
+import { LumberPile } from "../entities/LumberPile";
 import { createProceduralTextures } from "../world/TextureFactory";
+
+type Interactable =
+  | { kind: "treasure"; obj: Treasure }
+  | { kind: "storage"; obj: Storage }
+  | { kind: "workbench"; obj: Workbench }
+  | { kind: "lumber"; obj: LumberPile };
 
 interface TeamRoster {
   human: Character | null;
@@ -23,9 +29,9 @@ export class MainScene extends Phaser.Scene {
   private labMap!: LabMap;
   private flags: Flag[] = [];
   private treasures: Treasure[] = [];
-  private potions: Potion[] = []; // Potions that spawn from treasures
-  private katanas: Katana[] = []; // Katanas that spawn from treasures
-  private mines: Mine[] = []; // Mines that spawn from treasures
+  private storages: Storage[] = [];
+  private workbenches: Workbench[] = [];
+  private lumberPiles: LumberPile[] = [];
   private arrows: Arrow[] = [];
   private grenades: Grenade[] = [];
   private roster!: Record<TeamId, TeamRoster>;
@@ -53,12 +59,11 @@ export class MainScene extends Phaser.Scene {
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
   private grenadeSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
   private grenadeCountText!: Phaser.GameObjects.Text;
-  private katanaCountText!: Phaser.GameObjects.Text; // For displaying remaining katana uses
-  private mineCountText!: Phaser.GameObjects.Text; // For displaying mine count
+  private katanaSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
   private swiftStatusText!: Phaser.GameObjects.Text; // For displaying swift potion status
-  private katanaUsesText!: Phaser.GameObjects.Text; // For displaying remaining uses
   private treasurePromptText!: Phaser.GameObjects.Text;
-  private nearbyTreasure: Treasure | null = null;
+  private nearbyInteractable: Interactable | null = null;
+  private activePanel: Phaser.GameObjects.Container | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
   private minimap!: Minimap;
   private readonly ZOOM = 1.47;
@@ -107,7 +112,15 @@ export class MainScene extends Phaser.Scene {
 
     const mapSeeds = [20260706, 20260707, 20260708, 20260709, 20260710];
     const randomSeed = mapSeeds[Math.floor(Math.random() * mapSeeds.length)];
-    this.labMap = new LabMap(randomSeed, modeConfig.MAP_SCALE, modeConfig.TREASURE_COUNT);
+    this.labMap = new LabMap(randomSeed, {
+      gridCols: modeConfig.GRID_COLS,
+      gridRows: modeConfig.GRID_ROWS,
+      cellScale: modeConfig.CELL_SCALE,
+      treasureCount: modeConfig.TREASURE_COUNT,
+      storageCount: modeConfig.STORAGE_COUNT,
+      workbenchCount: modeConfig.WORKBENCH_COUNT,
+      lumberCount: modeConfig.LUMBER_COUNT,
+    });
     this.labMap.render(this, this.worldContainer);
     this.createTorchFlames();
     this.minimap = new Minimap(this, this.labMap, this.scale.width - 170, this.scale.height - 150);
@@ -123,6 +136,24 @@ export class MainScene extends Phaser.Scene {
       const treasure = new Treasure(this, spawn.x, spawn.y);
       this.worldContainer.add(treasure.container);
       return treasure;
+    });
+
+    this.storages = this.labMap.storageSpawns.map((spawn) => {
+      const storage = new Storage(this, spawn.x, spawn.y);
+      this.worldContainer.add(storage.container);
+      return storage;
+    });
+
+    this.workbenches = this.labMap.workbenchSpawns.map((spawn) => {
+      const workbench = new Workbench(this, spawn.x, spawn.y);
+      this.worldContainer.add(workbench.container);
+      return workbench;
+    });
+
+    this.lumberPiles = this.labMap.lumberSpawns.map((spawn) => {
+      const lumber = new LumberPile(this, spawn.x, spawn.y);
+      this.worldContainer.add(lumber.container);
+      return lumber;
     });
 
     const redSpawn = this.labMap.baseSpawns.red;
@@ -182,47 +213,16 @@ export class MainScene extends Phaser.Scene {
   private updateItems(): void {
     const now = this.time.now;
 
-    // Check if katana is broken (no uses left)
-    if (this.player.weapon === "katana" && this.player.katanaUsesRemaining <= 0) {
-      this.spawnFloatingText(this.player.x, this.player.y - 20, "日本刀が壊れた！", "#ff4444");
-      this.player.katanaCount = 0;
-      this.player.switchWeapon("sword");
-    }
-
-    // Update potion status display
+    // Update potion status display (unobtrusive, top-right corner)
     const hasSwiftActive = this.player.potionSwiftEndTime > now;
-    if (hasSwiftActive && !this.swiftStatusText.visible) {
-      this.swiftStatusText.setVisible(true);
-    } else if (!hasSwiftActive && this.swiftStatusText.visible) {
-      this.swiftStatusText.setVisible(false);
+    if (hasSwiftActive !== this.swiftStatusText.visible) {
+      this.swiftStatusText.setVisible(hasSwiftActive);
     }
 
     if (hasSwiftActive) {
       const remainingMs = this.player.potionSwiftEndTime - now;
       const remainingS = Math.ceil(remainingMs / 1000);
       this.swiftStatusText.setText(`⚡ 俊足 ${remainingS}s`);
-    }
-
-    // Update katana uses display
-    if (this.player.katanaCount > 0 && !this.katanaUsesText.visible) {
-      this.katanaUsesText.setVisible(true);
-    } else if (this.player.katanaCount === 0 && this.katanaUsesText.visible) {
-      this.katanaUsesText.setVisible(false);
-    }
-
-    if (this.player.katanaCount > 0) {
-      this.katanaUsesText.setText(`⚔️ 日本刀 ${this.player.katanaUsesRemaining}/${GAME_CONFIG.KATANA.MAX_USES}`);
-    }
-
-    // Update mine count display
-    if (this.player.mineCount > 0 && !this.mineCountText.visible) {
-      this.mineCountText.setVisible(true);
-    } else if (this.player.mineCount === 0 && this.mineCountText.visible) {
-      this.mineCountText.setVisible(false);
-    }
-
-    if (this.player.mineCount > 0) {
-      this.mineCountText.setText(`💣 地雷 X${this.player.mineCount}`);
     }
   }
 
@@ -310,11 +310,8 @@ export class MainScene extends Phaser.Scene {
     keyboard.addKey("FOUR").on("down", () => {
       if (this.gameStarted && this.player.katanaCount > 0) this.player.switchWeapon("katana");
     });
-    keyboard.addKey("FIVE").on("down", () => {
-      if (this.gameStarted && this.player.mineCount > 0) this.player.switchWeapon("grenade"); // Use grenade slot for mine
-    });
 
-    keyboard.addKey("E").on("down", () => this.tryOpenTreasure());
+    keyboard.addKey("E").on("down", () => this.tryInteract());
 
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
@@ -402,7 +399,7 @@ export class MainScene extends Phaser.Scene {
       .setDepth(100)
       .setVisible(false);
 
-    // Swift potion status (top-right corner)
+    // Swift potion status — kept small and unobtrusive in the top-right corner.
     this.swiftStatusText = this.add
       .text(this.scale.width - 20, 20, "", {
         fontFamily: "monospace",
@@ -413,35 +410,12 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(100)
       .setVisible(false);
-
-    // Katana uses and mine count (top-right, below swift status)
-    this.katanaUsesText = this.add
-      .text(this.scale.width - 20, 40, "", {
-        fontFamily: "monospace",
-        fontSize: "11px",
-        color: "#ef4444",
-      })
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setDepth(100)
-      .setVisible(false);
-
-    this.mineCountText = this.add
-      .text(this.scale.width - 20, 58, "", {
-        fontFamily: "monospace",
-        fontSize: "11px",
-        color: "#94a3b8",
-      })
-      .setOrigin(1, 0)
-      .setScrollFactor(0)
-      .setDepth(100)
-      .setVisible(false);
   }
 
   private setupHotbar(): void {
     const slotSize = 56;
     const gap = 8;
-    const totalWidth = slotSize * 3 + gap * 2;
+    const totalWidth = slotSize * 4 + gap * 3;
     const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
     const y = this.scale.height - 46;
 
@@ -449,6 +423,7 @@ export class MainScene extends Phaser.Scene {
       { icon: "🗡️", key: "1", label: "SWORD" },
       { icon: "🏹", key: "2", label: "BOW" },
       { icon: "💣", key: "3", label: "GRENADE" },
+      { icon: "⚔️", key: "4", label: "KATANA" },
     ];
 
     defs.forEach((def, i) => {
@@ -480,7 +455,7 @@ export class MainScene extends Phaser.Scene {
 
       this.hotbarSlots.push(bg);
 
-      // Grenade slot is hidden until the player actually finds one in a treasure chest.
+      // Grenade/katana slots are hidden until the player actually has one.
       if (i === 2) {
         this.grenadeCountText = this.add
           .text(x + slotSize / 2 - 4, y - slotSize / 2 + 2, "", {
@@ -496,12 +471,17 @@ export class MainScene extends Phaser.Scene {
         this.grenadeSlotObjects = [bg, icon, label, this.grenadeCountText];
         this.grenadeSlotObjects.forEach((obj) => obj.setVisible(false));
       }
+      if (i === 3) {
+        this.katanaSlotObjects = [bg, icon, label];
+        this.katanaSlotObjects.forEach((obj) => obj.setVisible(false));
+      }
     });
   }
 
   private updateHotbar(): void {
     const now = this.time.now;
     const hasGrenade = this.player.grenadeCount > 0;
+    const hasKatana = this.player.katanaCount > 0;
 
     if (hasGrenade !== this.grenadeSlotObjects[0].visible) {
       this.grenadeSlotObjects.forEach((obj) => obj.setVisible(hasGrenade));
@@ -509,12 +489,22 @@ export class MainScene extends Phaser.Scene {
     if (hasGrenade) {
       this.grenadeCountText.setText(`X${this.player.grenadeCount}`);
     }
+    if (hasKatana !== this.katanaSlotObjects[0].visible) {
+      this.katanaSlotObjects.forEach((obj) => obj.setVisible(hasKatana));
+    }
 
-    const activeIndex = this.player.weapon === "sword" ? 0 : this.player.weapon === "bow" ? 1 : 2;
-    const onCooldown = [now < this.player.swordCooldownEndsAt, now < this.player.bowCooldownEndsAt, false];
+    const weaponIndex: Record<string, number> = { sword: 0, bow: 1, grenade: 2, katana: 3 };
+    const activeIndex = weaponIndex[this.player.weapon] ?? 0;
+    const onCooldown = [
+      now < this.player.swordCooldownEndsAt,
+      now < this.player.bowCooldownEndsAt,
+      false,
+      now < this.player.katanaCooldownEndsAt,
+    ];
 
     this.hotbarSlots.forEach((slot, i) => {
       if (i === 2 && !hasGrenade) return;
+      if (i === 3 && !hasKatana) return;
       const isActive = i === activeIndex;
       if (onCooldown[i]) {
         slot.setFillStyle(0x0c0c0c, 0.92);
@@ -1135,10 +1125,10 @@ export class MainScene extends Phaser.Scene {
     this.worldContainer.bringToTop(this.fovLayer);
   }
 
-  /** Only the human player can trigger chests — bots never call tryOpenTreasure, so CPUs can't loot them. */
+  /** Only the human player can interact — bots never call tryInteract, so CPUs can't loot chests or craft. */
   private updateTreasureProximity(): void {
     const OPEN_RANGE = 70;
-    let closest: Treasure | null = null;
+    let closest: Interactable | null = null;
     let closestDist = Infinity;
 
     for (const t of this.treasures) {
@@ -1146,53 +1136,276 @@ export class MainScene extends Phaser.Scene {
       const dist = Math.hypot(t.x - this.player.x, t.y - this.player.y);
       if (dist <= OPEN_RANGE && dist < closestDist) {
         closestDist = dist;
-        closest = t;
+        closest = { kind: "treasure", obj: t };
+      }
+    }
+    for (const s of this.storages) {
+      if (s.opened) continue;
+      const dist = Math.hypot(s.x - this.player.x, s.y - this.player.y);
+      if (dist <= OPEN_RANGE && dist < closestDist) {
+        closestDist = dist;
+        closest = { kind: "storage", obj: s };
+      }
+    }
+    for (const w of this.workbenches) {
+      const dist = Math.hypot(w.x - this.player.x, w.y - this.player.y);
+      if (dist <= OPEN_RANGE && dist < closestDist) {
+        closestDist = dist;
+        closest = { kind: "workbench", obj: w };
+      }
+    }
+    for (const l of this.lumberPiles) {
+      if (l.collected) continue;
+      const dist = Math.hypot(l.x - this.player.x, l.y - this.player.y);
+      if (dist <= OPEN_RANGE && dist < closestDist) {
+        closestDist = dist;
+        closest = { kind: "lumber", obj: l };
       }
     }
 
-    for (const t of this.treasures) {
-      t.setIndicatorVisible(t === closest);
-    }
+    for (const t of this.treasures) t.setIndicatorVisible(closest?.kind === "treasure" && closest.obj === t);
+    for (const s of this.storages) s.setIndicatorVisible(closest?.kind === "storage" && closest.obj === s);
+    for (const w of this.workbenches) w.setIndicatorVisible(closest?.kind === "workbench" && closest.obj === w);
+    for (const l of this.lumberPiles) l.setIndicatorVisible(closest?.kind === "lumber" && closest.obj === l);
 
-    this.nearbyTreasure = closest;
-    if (closest) {
-      this.treasurePromptText.setText("💎Eキーで宝箱を開ける💎");
+    this.nearbyInteractable = closest;
+    if (this.activePanel) {
+      this.treasurePromptText.setVisible(false);
+    } else if (closest) {
+      const prompts: Record<Interactable["kind"], string> = {
+        treasure: "💎Eキーで宝箱を開ける💎",
+        storage: "🗄️Eキーで倉庫を開ける🗄️",
+        workbench: "🛠️Eキーで作業台を使う🛠️",
+        lumber: "🪵Eキーで材木を拾う🪵",
+      };
+      this.treasurePromptText.setText(prompts[closest.kind]);
       this.treasurePromptText.setVisible(true);
     } else {
       this.treasurePromptText.setVisible(false);
     }
   }
 
-  private tryOpenTreasure(): void {
-    if (!this.gameStarted || this.match.isOver || !this.nearbyTreasure) return;
+  private tryInteract(): void {
+    if (!this.gameStarted || this.match.isOver) return;
 
-    const treasure = this.nearbyTreasure;
+    if (this.activePanel) {
+      this.closeActivePanel();
+      return;
+    }
+
+    const target = this.nearbyInteractable;
+    if (!target) {
+      this.showInventoryPanel();
+      return;
+    }
+
+    switch (target.kind) {
+      case "treasure":
+        this.openTreasure(target.obj);
+        break;
+      case "storage":
+        this.openStorage(target.obj);
+        break;
+      case "lumber":
+        this.collectLumber(target.obj);
+        break;
+      case "workbench":
+        this.showCraftingPanel(target.obj);
+        break;
+    }
+  }
+
+  private openTreasure(treasure: Treasure): void {
     const itemType = treasure.open();
     if (!itemType) return;
 
     let message = "";
-    switch (itemType) {
-      case "grenade":
-        this.player.addGrenade();
-        message = "手榴弾を1個獲得！";
-        break;
-      case "potion_swift":
-        this.player.addPotionSwift();
-        message = "俊足のポーション 1分間移動速度UP！";
-        break;
-      case "katana":
-        this.player.addKatana();
-        message = `日本刀を獲得！ (使用回数: ${this.player.katanaUsesRemaining})`;
-        this.player.switchWeapon("katana");
-        break;
-      case "mine":
-        this.player.addMine();
-        message = "地雷を1個獲得！";
-        break;
+    if (itemType === "grenade") {
+      this.player.addGrenade();
+      message = "手榴弾を1個獲得！";
+    } else {
+      const durationMs = GAME_MODE_CONFIG[this.gameMode].POTION_DURATION_MS;
+      this.player.addPotionSwift(durationMs);
+      message = "俊足のポーション！移動速度UP";
     }
     this.spawnFloatingText(treasure.x, treasure.y - 40, message, "#ffd700");
-
-    this.nearbyTreasure = null;
+    this.nearbyInteractable = null;
     this.treasurePromptText.setVisible(false);
+  }
+
+  private openStorage(storage: Storage): void {
+    if (!storage.open()) return;
+    this.player.addIron(GAME_CONFIG.STORAGE_IRON_AMOUNT);
+    this.spawnFloatingText(storage.x, storage.y - 40, `鉄を${GAME_CONFIG.STORAGE_IRON_AMOUNT}個獲得！`, "#cbd5e1");
+    this.nearbyInteractable = null;
+    this.treasurePromptText.setVisible(false);
+  }
+
+  private collectLumber(lumber: LumberPile): void {
+    if (!lumber.collect()) return;
+    this.player.addStick(GAME_CONFIG.LUMBER_STICK_AMOUNT);
+    this.spawnFloatingText(lumber.x, lumber.y - 30, `木の棒を${GAME_CONFIG.LUMBER_STICK_AMOUNT}個獲得！`, "#c9a06a");
+    this.nearbyInteractable = null;
+    this.treasurePromptText.setVisible(false);
+  }
+
+  private closeActivePanel(): void {
+    this.activePanel?.destroy();
+    this.activePanel = null;
+  }
+
+  /** Screen-space modal frame shared by the inventory and crafting panels. */
+  private buildPanelFrame(title: string, height: number): { container: Phaser.GameObjects.Container; cx: number; top: number } {
+    const cx = this.scale.width / 2;
+    const w = 360;
+    const top = this.scale.height / 2 - height / 2;
+
+    const dim = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x05060a, 0.5).setOrigin(0, 0);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x161a22, 0.96);
+    panel.fillRoundedRect(cx - w / 2, top, w, height, 14);
+    panel.lineStyle(2, 0xd4af37, 0.7);
+    panel.strokeRoundedRect(cx - w / 2, top, w, height, 14);
+
+    const titleText = this.add
+      .text(cx, top + 22, title, {
+        fontFamily: "georgia, serif",
+        fontSize: "20px",
+        color: "#f5e6c4",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+
+    const hint = this.add
+      .text(cx, top + height - 16, "Eキーで閉じる", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#8a8f9a",
+      })
+      .setOrigin(0.5);
+
+    const container = this.add.container(0, 0, [dim, panel, titleText, hint]);
+    container.setScrollFactor(0);
+    container.setDepth(300);
+    return { container, cx, top };
+  }
+
+  private showInventoryPanel(): void {
+    const p = this.player;
+    const lines: string[] = [
+      `🗡️ 剣`,
+      `🏹 弓`,
+      p.grenadeCount > 0 ? `💣 手榴弾 x${p.grenadeCount}` : null,
+      p.katanaCount > 0 ? `⚔️ 日本刀 x${p.katanaCount}` : null,
+      `🔩 鉄 x${p.ironCount}`,
+      `🪵 木の棒 x${p.stickCount}`,
+      p.potionSwiftEndTime > this.time.now
+        ? `⚡ 俊足の効果中: 残り${Math.ceil((p.potionSwiftEndTime - this.time.now) / 1000)}秒`
+        : null,
+    ].filter((l): l is string => l !== null);
+
+    const height = 90 + lines.length * 24;
+    const { container, cx, top } = this.buildPanelFrame("自分の持ち物", height);
+
+    const listText = this.add
+      .text(cx, top + 50, lines.join("\n"), {
+        fontFamily: "monospace",
+        fontSize: "15px",
+        color: "#e5e0d0",
+        align: "left",
+        lineSpacing: 8,
+      })
+      .setOrigin(0.5, 0);
+
+    container.add(listText);
+    this.activePanel = container;
+  }
+
+  private showCraftingPanel(workbench: Workbench): void {
+    const p = this.player;
+    const materials = GAME_CONFIG.KATANA.CRAFT_MATERIALS;
+    const canCraft = p.ironCount >= materials.iron && p.stickCount >= materials.stick;
+
+    const height = 210;
+    const { container, cx, top } = this.buildPanelFrame("作業台 — クラフト", height);
+
+    const recipeText = this.add
+      .text(cx, top + 54, "⚔️ 日本刀", {
+        fontFamily: "monospace",
+        fontSize: "17px",
+        color: "#f5e6c4",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+
+    const ironOk = p.ironCount >= materials.iron;
+    const stickOk = p.stickCount >= materials.stick;
+    const ironText = this.add
+      .text(cx, top + 84, `🔩 鉄  ${p.ironCount}/${materials.iron}`, {
+        fontFamily: "monospace",
+        fontSize: "14px",
+        color: ironOk ? "#cbd5e1" : "#f87171",
+      })
+      .setOrigin(0.5, 0);
+    const stickText = this.add
+      .text(cx, top + 106, `🪵 木の棒  ${p.stickCount}/${materials.stick}`, {
+        fontFamily: "monospace",
+        fontSize: "14px",
+        color: stickOk ? "#cbd5e1" : "#f87171",
+      })
+      .setOrigin(0.5, 0);
+
+    const btnW = 160;
+    const btnH = 42;
+    const btnY = top + height - 56;
+    const btnGfx = this.add.graphics();
+    const drawBtn = (hover: boolean) => {
+      btnGfx.clear();
+      if (!canCraft) {
+        btnGfx.fillStyle(0x2a2d33, 0.9);
+        btnGfx.fillRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+        btnGfx.lineStyle(2, 0x555555, 0.8);
+        btnGfx.strokeRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+        return;
+      }
+      btnGfx.fillStyle(hover ? 0x3a5a2e : 0x2f4a26, 0.95);
+      btnGfx.fillRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+      btnGfx.lineStyle(2, 0x8fce6a, hover ? 1 : 0.8);
+      btnGfx.strokeRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+    };
+    drawBtn(false);
+
+    const btnText = this.add
+      .text(cx, btnY, "クラフト", {
+        fontFamily: "georgia, serif",
+        fontSize: "16px",
+        color: canCraft ? "#f5e6c4" : "#666666",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+
+    container.add([recipeText, ironText, stickText, btnGfx, btnText]);
+
+    if (canCraft) {
+      const hitZone = this.add
+        .zone(cx, btnY, btnW, btnH)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on("pointerover", () => drawBtn(true))
+        .on("pointerout", () => drawBtn(false))
+        .on("pointerdown", () => {
+          if (p.ironCount < materials.iron || p.stickCount < materials.stick) return;
+          p.ironCount -= materials.iron;
+          p.stickCount -= materials.stick;
+          p.addKatana();
+          p.switchWeapon("katana");
+          this.spawnFloatingText(this.player.x, this.player.y - 40, "日本刀をクラフトした！", "#ffd700");
+          this.closeActivePanel();
+        });
+      container.add(hitZone);
+    }
+
+    this.activePanel = container;
+    void workbench;
   }
 }
