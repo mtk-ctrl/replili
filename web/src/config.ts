@@ -16,6 +16,7 @@ export const TEAM_COLOR: Record<TeamId, number> = {
 
 interface ModeConfig {
   MATCH_SECONDS: number;
+  PLAYERS_PER_TEAM: number;
   GRID_COLS: number;
   GRID_ROWS: number;
   CELL_SCALE: number;
@@ -33,6 +34,7 @@ interface ModeConfig {
 export const GAME_MODE_CONFIG: Record<GameMode, ModeConfig> = {
   normal: {
     MATCH_SECONDS: 180,
+    PLAYERS_PER_TEAM: 4,
     GRID_COLS: 7,
     GRID_ROWS: 7,
     CELL_SCALE: 1,
@@ -45,6 +47,7 @@ export const GAME_MODE_CONFIG: Record<GameMode, ModeConfig> = {
   },
   extended: {
     MATCH_SECONDS: 600,
+    PLAYERS_PER_TEAM: 6,
     GRID_COLS: 9,
     GRID_ROWS: 10,
     CELL_SCALE: 1.5,
@@ -60,9 +63,8 @@ export const GAME_MODE_CONFIG: Record<GameMode, ModeConfig> = {
 // Flag Crafters（仮）— design-doc v0.2 balance numbers.
 // Anything marked "仮" is a placeholder the user asked to leave to us for now.
 export const GAME_CONFIG = {
-  PLAYERS_PER_TEAM: 5,
   MAX_HEALTH: 100,
-  MOVE_SPEED: 220,
+  MOVE_SPEED: 352, // 220 * 1.6
 
   SWORD: {
     DAMAGE: 20,
@@ -88,8 +90,18 @@ export const GAME_CONFIG = {
     CRAFT_MATERIALS: { iron: 3, stick: 2 },
   },
 
+  PISTOL: {
+    DAMAGE: 15, // 1.5x bow
+    COOLDOWN_MS: 4000,
+    RANGE: 640,
+    BULLET_SPEED: 850, // faster than the bow's arrow
+    CRAFT_MATERIALS: { iron: 5, stick: 0 },
+  },
+
   POTION_SWIFT: {
-    SPEED_MULTIPLIER: 2.5,
+    // Applied on top of the already-boosted base MOVE_SPEED, so the
+    // in-potion speed ends up base(1.6x) * 1.6 = original * 2.56.
+    SPEED_MULTIPLIER: 1.6,
   },
 
   STORAGE_IRON_AMOUNT: 2,

@@ -184,44 +184,77 @@ export class LabMap {
     reservedRoomIds.add(cellToBlock[cellId(this.gridCols - 1, this.gridRows - 1)]);
     const openRooms = this.rooms.filter(r => !reservedRoomIds.has(r.id) && r.flavor !== "corridor");
 
+    // Shared across all four categories so a chest/storage/workbench/lumber pile
+    // never gets placed on top of (or right next to) another one.
+    const occupied: Point[] = [];
+    const MIN_SPACING = 90;
+
     const treasureRng = mulberry32(seed + 7777);
-    this.treasureSpawns.push(...this.scatterInRooms(treasureRng, openRooms, treasureCount, false));
+    this.treasureSpawns.push(...this.scatterInRooms(treasureRng, openRooms, treasureCount, false, occupied, MIN_SPACING));
 
     const storageRng = mulberry32(seed + 8888);
-    this.storageSpawns.push(...this.scatterInRooms(storageRng, openRooms, storageCount, false));
+    this.storageSpawns.push(...this.scatterInRooms(storageRng, openRooms, storageCount, false, occupied, MIN_SPACING));
 
     const workbenchRng = mulberry32(seed + 9999);
-    this.workbenchSpawns.push(...this.scatterInRooms(workbenchRng, openRooms, workbenchCount, false));
+    this.workbenchSpawns.push(...this.scatterInRooms(workbenchRng, openRooms, workbenchCount, false, occupied, MIN_SPACING));
 
     const lumberRng = mulberry32(seed + 11111);
-    this.lumberSpawns.push(...this.scatterInRooms(lumberRng, openRooms, lumberCount, true));
+    this.lumberSpawns.push(...this.scatterInRooms(lumberRng, openRooms, lumberCount, true, occupied, MIN_SPACING));
   }
 
-  /** Scatters `count` points across rooms (recycling the pool once exhausted). edgeBias hugs a room wall instead of the center. */
-  private scatterInRooms(rng: () => number, roomPool: Room[], count: number, edgeBias: boolean): Point[] {
+  /**
+   * Scatters `count` points across rooms (recycling the pool once exhausted). edgeBias hugs a
+   * room wall instead of the center. `occupied` accumulates every point placed so far (across
+   * all categories) so nothing lands on top of something already placed; `minSpacing` is the
+   * rejection radius, with a bounded number of retries before we just accept the last try.
+   */
+  private scatterInRooms(
+    rng: () => number,
+    roomPool: Room[],
+    count: number,
+    edgeBias: boolean,
+    occupied: Point[],
+    minSpacing: number
+  ): Point[] {
     const points: Point[] = [];
     if (roomPool.length === 0) return points;
 
-    let available = [...roomPool];
-    for (let i = 0; i < count; i++) {
-      if (available.length === 0) available = [...roomPool];
-      const idx = Math.floor(rng() * available.length);
-      const room = available.splice(idx, 1)[0];
-
+    const sampleInRoom = (room: Room): Point => {
       if (edgeBias) {
         const margin = 36;
         const edge = Math.floor(rng() * 4);
         const spanX = Math.max(1, room.w - margin * 2);
         const spanY = Math.max(1, room.h - margin * 2);
-        if (edge === 0) points.push({ x: room.x + margin + rng() * spanX, y: room.y + margin });
-        else if (edge === 1) points.push({ x: room.x + margin + rng() * spanX, y: room.y + room.h - margin });
-        else if (edge === 2) points.push({ x: room.x + margin, y: room.y + margin + rng() * spanY });
-        else points.push({ x: room.x + room.w - margin, y: room.y + margin + rng() * spanY });
-      } else {
-        const offsetX = (rng() - 0.5) * Math.min(room.w, 80);
-        const offsetY = (rng() - 0.5) * Math.min(room.h, 80);
-        points.push({ x: room.x + room.w / 2 + offsetX, y: room.y + room.h / 2 + offsetY });
+        if (edge === 0) return { x: room.x + margin + rng() * spanX, y: room.y + margin };
+        if (edge === 1) return { x: room.x + margin + rng() * spanX, y: room.y + room.h - margin };
+        if (edge === 2) return { x: room.x + margin, y: room.y + margin + rng() * spanY };
+        return { x: room.x + room.w - margin, y: room.y + margin + rng() * spanY };
       }
+      // Spread across most of the room (not just a small patch near the center) so
+      // bigger rooms actually give the min-spacing search room to work with.
+      const marginX = Math.min(40, room.w * 0.15);
+      const marginY = Math.min(40, room.h * 0.15);
+      const offsetX = (rng() - 0.5) * Math.max(1, room.w - marginX * 2);
+      const offsetY = (rng() - 0.5) * Math.max(1, room.h - marginY * 2);
+      return { x: room.x + room.w / 2 + offsetX, y: room.y + room.h / 2 + offsetY };
+    };
+
+    const isFarEnough = (p: Point) => occupied.every((o) => Math.hypot(o.x - p.x, o.y - p.y) >= minSpacing);
+
+    const MAX_ATTEMPTS = 40;
+    for (let i = 0; i < count; i++) {
+      let candidate: Point | null = null;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const room = roomPool[Math.floor(rng() * roomPool.length)];
+        const p = sampleInRoom(room);
+        if (isFarEnough(p)) {
+          candidate = p;
+          break;
+        }
+        if (!candidate) candidate = p; // fallback if every attempt collides
+      }
+      points.push(candidate!);
+      occupied.push(candidate!);
     }
     return points;
   }

@@ -3,6 +3,7 @@ import { GAME_CONFIG, GAME_MODE_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId, type Gam
 import { LabMap } from "../world/LabMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
+import { Bullet } from "../entities/Bullet";
 import { Grenade } from "../entities/Grenade";
 import { Character } from "../entities/Character";
 import { BotAI } from "../entities/BotAI";
@@ -20,6 +21,14 @@ type Interactable =
   | { kind: "workbench"; obj: Workbench }
   | { kind: "lumber"; obj: LumberPile };
 
+interface CraftRecipe {
+  id: string;
+  name: string;
+  icon: string;
+  materials: { iron: number; stick: number };
+  craft: () => void;
+}
+
 interface TeamRoster {
   human: Character | null;
   bots: { character: Character; ai: BotAI }[];
@@ -33,12 +42,14 @@ export class MainScene extends Phaser.Scene {
   private workbenches: Workbench[] = [];
   private lumberPiles: LumberPile[] = [];
   private arrows: Arrow[] = [];
+  private bullets: Bullet[] = [];
   private grenades: Grenade[] = [];
   private roster!: Record<TeamId, TeamRoster>;
   private player!: Character;
   private match!: MatchManager;
   private gameStarted = false;
   private gameMode: GameMode = "normal"; // Current game mode (normal or extended)
+  private playersPerTeam = 4;
   private titleScreen!: Phaser.GameObjects.Container;
   private visitedRooms = new Set<number>();
   private currentRoom: number | null = null;
@@ -60,6 +71,7 @@ export class MainScene extends Phaser.Scene {
   private grenadeSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
   private grenadeCountText!: Phaser.GameObjects.Text;
   private katanaSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
+  private pistolSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
   private swiftStatusText!: Phaser.GameObjects.Text; // For displaying swift potion status
   private treasurePromptText!: Phaser.GameObjects.Text;
   private nearbyInteractable: Interactable | null = null;
@@ -161,8 +173,9 @@ export class MainScene extends Phaser.Scene {
     this.worldContainer.add(this.player.container);
     this.roster.red.human = this.player;
 
-    for (let i = 1; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("red", i);
-    for (let i = 0; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("blue", i);
+    this.playersPerTeam = modeConfig.PLAYERS_PER_TEAM;
+    for (let i = 1; i < this.playersPerTeam; i++) this.spawnBot("red", i);
+    for (let i = 0; i < this.playersPerTeam; i++) this.spawnBot("blue", i);
 
     this.playerLight = this.add
       .image(this.player.x, this.player.y, "fx-glow")
@@ -194,6 +207,7 @@ export class MainScene extends Phaser.Scene {
       this.updateCombosAndHits();
       this.updateCharacterPhysics(dt);
       this.updateArrows(dt);
+      this.updateBullets(dt);
       this.updateGrenades(dt);
       this.updateRespawns(time);
       this.updateFlags(dt);
@@ -269,7 +283,7 @@ export class MainScene extends Phaser.Scene {
 
   private spawnBot(team: TeamId, index: number): void {
     const base = this.labMap.baseSpawns[team];
-    const angle = (index / GAME_CONFIG.PLAYERS_PER_TEAM) * Math.PI * 2;
+    const angle = (index / this.playersPerTeam) * Math.PI * 2;
     const x = base.x + Math.cos(angle) * 60;
     const y = base.y + Math.sin(angle) * 60;
     const character = new Character(this, this.labMap, team, x, y, false);
@@ -310,6 +324,9 @@ export class MainScene extends Phaser.Scene {
     keyboard.addKey("FOUR").on("down", () => {
       if (this.gameStarted && this.player.katanaCount > 0) this.player.switchWeapon("katana");
     });
+    keyboard.addKey("FIVE").on("down", () => {
+      if (this.gameStarted && this.player.pistolCount > 0) this.player.switchWeapon("pistol");
+    });
 
     keyboard.addKey("E").on("down", () => this.tryInteract());
 
@@ -329,6 +346,8 @@ export class MainScene extends Phaser.Scene {
         }
       } else if (this.player.weapon === "katana") {
         if (this.player.startKatanaSwing(this.time.now)) this.applyKatanaHit(this.player);
+      } else if (this.player.weapon === "pistol") {
+        if (this.player.firePistol(this.time.now)) this.spawnBullet(this.player, this.player.facing);
       }
     });
   }
@@ -415,7 +434,7 @@ export class MainScene extends Phaser.Scene {
   private setupHotbar(): void {
     const slotSize = 56;
     const gap = 8;
-    const totalWidth = slotSize * 4 + gap * 3;
+    const totalWidth = slotSize * 5 + gap * 4;
     const startX = this.scale.width / 2 - totalWidth / 2 + slotSize / 2;
     const y = this.scale.height - 46;
 
@@ -424,6 +443,7 @@ export class MainScene extends Phaser.Scene {
       { icon: "🏹", key: "2", label: "BOW" },
       { icon: "💣", key: "3", label: "GRENADE" },
       { icon: "⚔️", key: "4", label: "KATANA" },
+      { icon: "🔫", key: "5", label: "PISTOL" },
     ];
 
     defs.forEach((def, i) => {
@@ -475,6 +495,10 @@ export class MainScene extends Phaser.Scene {
         this.katanaSlotObjects = [bg, icon, label];
         this.katanaSlotObjects.forEach((obj) => obj.setVisible(false));
       }
+      if (i === 4) {
+        this.pistolSlotObjects = [bg, icon, label];
+        this.pistolSlotObjects.forEach((obj) => obj.setVisible(false));
+      }
     });
   }
 
@@ -482,6 +506,7 @@ export class MainScene extends Phaser.Scene {
     const now = this.time.now;
     const hasGrenade = this.player.grenadeCount > 0;
     const hasKatana = this.player.katanaCount > 0;
+    const hasPistol = this.player.pistolCount > 0;
 
     if (hasGrenade !== this.grenadeSlotObjects[0].visible) {
       this.grenadeSlotObjects.forEach((obj) => obj.setVisible(hasGrenade));
@@ -492,19 +517,24 @@ export class MainScene extends Phaser.Scene {
     if (hasKatana !== this.katanaSlotObjects[0].visible) {
       this.katanaSlotObjects.forEach((obj) => obj.setVisible(hasKatana));
     }
+    if (hasPistol !== this.pistolSlotObjects[0].visible) {
+      this.pistolSlotObjects.forEach((obj) => obj.setVisible(hasPistol));
+    }
 
-    const weaponIndex: Record<string, number> = { sword: 0, bow: 1, grenade: 2, katana: 3 };
+    const weaponIndex: Record<string, number> = { sword: 0, bow: 1, grenade: 2, katana: 3, pistol: 4 };
     const activeIndex = weaponIndex[this.player.weapon] ?? 0;
     const onCooldown = [
       now < this.player.swordCooldownEndsAt,
       now < this.player.bowCooldownEndsAt,
       false,
       now < this.player.katanaCooldownEndsAt,
+      now < this.player.pistolCooldownEndsAt,
     ];
 
     this.hotbarSlots.forEach((slot, i) => {
       if (i === 2 && !hasGrenade) return;
       if (i === 3 && !hasKatana) return;
+      if (i === 4 && !hasPistol) return;
       const isActive = i === activeIndex;
       if (onCooldown[i]) {
         slot.setFillStyle(0x0c0c0c, 0.92);
@@ -907,6 +937,14 @@ export class MainScene extends Phaser.Scene {
     this.arrows.push(arrow);
   }
 
+  private spawnBullet(shooter: Character, angle: number): void {
+    const x = shooter.x + Math.cos(angle) * (shooter.radius + 6);
+    const y = shooter.y + Math.sin(angle) * (shooter.radius + 6);
+    const bullet = new Bullet(this, x, y, angle, shooter.team);
+    this.worldContainer.add(bullet.container);
+    this.bullets.push(bullet);
+  }
+
   private throwGrenade(thrower: Character, targetX: number, targetY: number): void {
     if (thrower.grenadeCount <= 0) return;
     const x = thrower.x + Math.cos(thrower.facing) * (thrower.radius + 10);
@@ -945,6 +983,36 @@ export class MainScene extends Phaser.Scene {
     this.arrows = this.arrows.filter((a) => {
       if (!a.alive) a.destroy();
       return a.alive;
+    });
+  }
+
+  private updateBullets(dt: number): void {
+    for (const bullet of this.bullets) {
+      if (!bullet.alive) continue;
+      bullet.update(dt);
+
+      if (!this.labMap.isFree(bullet.x, bullet.y, 2)) {
+        bullet.alive = false;
+        continue;
+      }
+
+      for (const target of this.enemiesOf(bullet.team)) {
+        if (!target.alive) continue;
+        const dist = Math.hypot(target.x - bullet.x, target.y - bullet.y);
+        if (dist <= target.radius) {
+          const behindX = bullet.x - Math.cos(bullet.angle) * 20;
+          const behindY = bullet.y - Math.sin(bullet.angle) * 20;
+          target.applyDamage(GAME_CONFIG.PISTOL.DAMAGE, behindX, behindY);
+          this.spawnHitEffect(target.x, target.y);
+          bullet.alive = false;
+          break;
+        }
+      }
+    }
+
+    this.bullets = this.bullets.filter((b) => {
+      if (!b.alive) b.destroy();
+      return b.alive;
     });
   }
 
@@ -1297,6 +1365,7 @@ export class MainScene extends Phaser.Scene {
       `🏹 弓`,
       p.grenadeCount > 0 ? `💣 手榴弾 x${p.grenadeCount}` : null,
       p.katanaCount > 0 ? `⚔️ 日本刀 x${p.katanaCount}` : null,
+      p.pistolCount > 0 ? `🔫 ピストル x${p.pistolCount}` : null,
       `🔩 鉄 x${p.ironCount}`,
       `🪵 木の棒 x${p.stickCount}`,
       p.potionSwiftEndTime > this.time.now
@@ -1321,16 +1390,92 @@ export class MainScene extends Phaser.Scene {
     this.activePanel = container;
   }
 
-  private showCraftingPanel(workbench: Workbench): void {
-    const p = this.player;
-    const materials = GAME_CONFIG.KATANA.CRAFT_MATERIALS;
-    const canCraft = p.ironCount >= materials.iron && p.stickCount >= materials.stick;
+  private craftRecipes(): CraftRecipe[] {
+    return [
+      {
+        id: "katana",
+        name: "日本刀",
+        icon: "⚔️",
+        materials: GAME_CONFIG.KATANA.CRAFT_MATERIALS,
+        craft: () => {
+          this.player.addKatana();
+          this.player.switchWeapon("katana");
+        },
+      },
+      {
+        id: "pistol",
+        name: "ピストル",
+        icon: "🔫",
+        materials: GAME_CONFIG.PISTOL.CRAFT_MATERIALS,
+        craft: () => {
+          this.player.addPistol();
+          this.player.switchWeapon("pistol");
+        },
+      },
+    ];
+  }
 
-    const height = 210;
+  private showCraftingPanel(workbench: Workbench): void {
+    void workbench;
+    const recipes = this.craftRecipes();
+    const height = 260;
     const { container, cx, top } = this.buildPanelFrame("作業台 — クラフト", height);
 
-    const recipeText = this.add
-      .text(cx, top + 54, "⚔️ 日本刀", {
+    const selectorY = top + 56;
+    const iconSize = 54;
+    const iconGap = 14;
+    const totalW = recipes.length * iconSize + (recipes.length - 1) * iconGap;
+    const selectorStartX = cx - totalW / 2 + iconSize / 2;
+
+    let detailsContainer: Phaser.GameObjects.Container | null = null;
+    const selectorBoxes: Phaser.GameObjects.Graphics[] = [];
+
+    const drawSelector = (selectedIndex: number) => {
+      recipes.forEach((_, i) => {
+        const box = selectorBoxes[i];
+        const x = selectorStartX + i * (iconSize + iconGap);
+        box.clear();
+        box.fillStyle(i === selectedIndex ? 0x3a3a2a : 0x1b1f27, 0.9);
+        box.fillRoundedRect(x - iconSize / 2, selectorY - iconSize / 2, iconSize, iconSize, 8);
+        box.lineStyle(2, i === selectedIndex ? 0xffd700 : 0x555555, 1);
+        box.strokeRoundedRect(x - iconSize / 2, selectorY - iconSize / 2, iconSize, iconSize, 8);
+      });
+    };
+
+    const selectRecipe = (index: number) => {
+      drawSelector(index);
+      detailsContainer?.destroy();
+      detailsContainer = this.buildRecipeDetails(recipes[index], cx, top + 108);
+      container.add(detailsContainer);
+    };
+
+    recipes.forEach((recipe, i) => {
+      const x = selectorStartX + i * (iconSize + iconGap);
+      const box = this.add.graphics();
+      selectorBoxes.push(box);
+      const icon = this.add.text(x, selectorY, recipe.icon, { fontSize: "26px" }).setOrigin(0.5);
+      const hitZone = this.add
+        .zone(x, selectorY, iconSize, iconSize)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on("pointerdown", () => selectRecipe(i));
+      container.add([box, icon, hitZone]);
+    });
+
+    selectRecipe(0);
+    this.activePanel = container;
+  }
+
+  /** Builds the materials + craft-button section for one selected recipe; returned container is owned by the caller. */
+  private buildRecipeDetails(recipe: CraftRecipe, cx: number, top: number): Phaser.GameObjects.Container {
+    const p = this.player;
+    const materials = recipe.materials;
+    const ironOk = p.ironCount >= materials.iron;
+    const stickOk = p.stickCount >= materials.stick;
+    const canCraft = ironOk && (materials.stick === 0 || stickOk);
+
+    const nameText = this.add
+      .text(cx, top, `${recipe.icon} ${recipe.name}`, {
         fontFamily: "monospace",
         fontSize: "17px",
         color: "#f5e6c4",
@@ -1338,26 +1483,34 @@ export class MainScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    const ironOk = p.ironCount >= materials.iron;
-    const stickOk = p.stickCount >= materials.stick;
+    const children: Phaser.GameObjects.GameObject[] = [nameText];
+    let lineY = top + 32;
+
     const ironText = this.add
-      .text(cx, top + 84, `🔩 鉄  ${p.ironCount}/${materials.iron}`, {
+      .text(cx, lineY, `🔩 鉄  ${p.ironCount}/${materials.iron}`, {
         fontFamily: "monospace",
         fontSize: "14px",
         color: ironOk ? "#cbd5e1" : "#f87171",
       })
       .setOrigin(0.5, 0);
-    const stickText = this.add
-      .text(cx, top + 106, `🪵 木の棒  ${p.stickCount}/${materials.stick}`, {
-        fontFamily: "monospace",
-        fontSize: "14px",
-        color: stickOk ? "#cbd5e1" : "#f87171",
-      })
-      .setOrigin(0.5, 0);
+    children.push(ironText);
+    lineY += 22;
+
+    if (materials.stick > 0) {
+      const stickText = this.add
+        .text(cx, lineY, `🪵 木の棒  ${p.stickCount}/${materials.stick}`, {
+          fontFamily: "monospace",
+          fontSize: "14px",
+          color: stickOk ? "#cbd5e1" : "#f87171",
+        })
+        .setOrigin(0.5, 0);
+      children.push(stickText);
+      lineY += 22;
+    }
 
     const btnW = 160;
     const btnH = 42;
-    const btnY = top + height - 56;
+    const btnY = lineY + 30;
     const btnGfx = this.add.graphics();
     const drawBtn = (hover: boolean) => {
       btnGfx.clear();
@@ -1384,7 +1537,7 @@ export class MainScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    container.add([recipeText, ironText, stickText, btnGfx, btnText]);
+    children.push(btnGfx, btnText);
 
     if (canCraft) {
       const hitZone = this.add
@@ -1397,15 +1550,13 @@ export class MainScene extends Phaser.Scene {
           if (p.ironCount < materials.iron || p.stickCount < materials.stick) return;
           p.ironCount -= materials.iron;
           p.stickCount -= materials.stick;
-          p.addKatana();
-          p.switchWeapon("katana");
-          this.spawnFloatingText(this.player.x, this.player.y - 40, "日本刀をクラフトした！", "#ffd700");
+          recipe.craft();
+          this.spawnFloatingText(this.player.x, this.player.y - 40, `${recipe.name}をクラフトした！`, "#ffd700");
           this.closeActivePanel();
         });
-      container.add(hitZone);
+      children.push(hitZone);
     }
 
-    this.activePanel = container;
-    void workbench;
+    return this.add.container(0, 0, children);
   }
 }

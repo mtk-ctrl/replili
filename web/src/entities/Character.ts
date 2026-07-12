@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
 import type { LabMap } from "../world/LabMap";
 
-export type WeaponType = "sword" | "bow" | "grenade" | "katana";
+export type WeaponType = "sword" | "bow" | "grenade" | "katana" | "pistol";
 
 /** Shared body for both the human player and bots: movement, health, and the sword/bow combat state machine. */
 export class Character {
@@ -19,6 +19,7 @@ export class Character {
   weapon: WeaponType = "sword";
   grenadeCount = 0;
   katanaCount = 0;
+  pistolCount = 0;
   potionSwiftEndTime = 0;
   ironCount = 0;
   stickCount = 0;
@@ -31,6 +32,7 @@ export class Character {
   private swordReadyAt = 0;
   private bowReadyAt = 0;
   private katanaReadyAt = 0;
+  private pistolReadyAt = 0;
   private walkPhase = 0;
 
   private scene: Phaser.Scene;
@@ -99,6 +101,10 @@ export class Character {
     return this.katanaReadyAt;
   }
 
+  get pistolCooldownEndsAt(): number {
+    return this.pistolReadyAt;
+  }
+
   get speedMultiplier(): number {
     const now = this.scene.time.now;
     return this.potionSwiftEndTime > now ? GAME_CONFIG.POTION_SWIFT.SPEED_MULTIPLIER : 1;
@@ -126,6 +132,14 @@ export class Character {
     return true;
   }
 
+  firePistol(now: number): boolean {
+    if (!this.alive) return false;
+    if (this.pistolCount <= 0) return false;
+    if (now < this.pistolReadyAt) return false;
+    this.pistolReadyAt = now + GAME_CONFIG.PISTOL.COOLDOWN_MS;
+    return true;
+  }
+
   switchWeapon(weapon: WeaponType): void {
     this.weapon = weapon;
     this.updateWeaponVisual();
@@ -141,6 +155,8 @@ export class Character {
       this.weaponEmoji.setText("💣");
     } else if (this.weapon === "katana") {
       this.weaponEmoji.setText("⚔️");
+    } else if (this.weapon === "pistol") {
+      this.weaponEmoji.setText("🔫");
     }
   }
 
@@ -150,6 +166,10 @@ export class Character {
 
   addKatana(): void {
     this.katanaCount++;
+  }
+
+  addPistol(): void {
+    this.pistolCount++;
   }
 
   addIron(amount: number): void {
@@ -252,6 +272,7 @@ export class Character {
     this.swordReadyAt = 0;
     this.bowReadyAt = 0;
     this.katanaReadyAt = 0;
+    this.pistolReadyAt = 0;
     this.grenadeCount = 0;
     this.container.setVisible(true);
     this.container.setPosition(x, y);

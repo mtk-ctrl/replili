@@ -21,6 +21,9 @@ const TARGET_REROLL_JITTER_MS = 3000;
 const TARGET_JITTER_RADIUS = 55;
 const STRAFE_CHANGE_MIN_MS = 500;
 const STRAFE_CHANGE_JITTER_MS = 700;
+const STUCK_CHECK_INTERVAL_MS = 5000;
+const STUCK_DIST_THRESHOLD = 50;
+const ESCAPE_DURATION_MS = 3000;
 
 /** Decision loop for a bot: mostly pushes toward contestable flags, only fights what it can actually see, sometimes ignores a fight to stay on task, and backs off when hurt. */
 export class BotAI {
@@ -35,6 +38,10 @@ export class BotAI {
   private nextStrafeChangeAt = 0;
   private strafeDir = 1;
   private strafeApproach = 0;
+  private stuckCheckAt = 0;
+  private stuckCheckPos: Point | null = null;
+  private escapeTarget: Point | null = null;
+  private escapeUntil = 0;
 
   constructor(
     private character: Character,
@@ -53,8 +60,11 @@ export class BotAI {
     if (!self.alive) {
       self.moveDirX = 0;
       self.moveDirY = 0;
+      this.stuckCheckPos = null;
       return;
     }
+
+    if (this.checkStuckAndMaybeEscape(now)) return;
 
     const visibleEnemy = this.findNearestVisibleEnemy(enemies);
 
@@ -76,6 +86,57 @@ export class BotAI {
 
     const target = this.pickTargetFlag(now) ?? this.baseSpawns[self.team];
     this.moveToward(now, target.x, target.y);
+  }
+
+  /**
+   * Every 5s, checks how far the bot has actually drifted. If it barely moved
+   * (typically wedged against a wall/corner), it heads for the nearest big open
+   * room for a few seconds instead of continuing to fight the geometry.
+   * Returns true while an escape is in progress (caller should skip its own move logic).
+   */
+  private checkStuckAndMaybeEscape(now: number): boolean {
+    const self = this.character;
+
+    if (this.stuckCheckPos === null) {
+      this.stuckCheckPos = { x: self.x, y: self.y };
+      this.stuckCheckAt = now + STUCK_CHECK_INTERVAL_MS;
+    } else if (now >= this.stuckCheckAt) {
+      const moved = Math.hypot(self.x - this.stuckCheckPos.x, self.y - this.stuckCheckPos.y);
+      if (moved < STUCK_DIST_THRESHOLD) {
+        this.escapeTarget = this.pickEscapeTarget();
+        this.escapeUntil = now + ESCAPE_DURATION_MS;
+        this.path = [];
+      }
+      this.stuckCheckAt = now + STUCK_CHECK_INTERVAL_MS;
+      this.stuckCheckPos = { x: self.x, y: self.y };
+    }
+
+    if (now < this.escapeUntil && this.escapeTarget) {
+      this.moveToward(now, this.escapeTarget.x, this.escapeTarget.y);
+      return true;
+    }
+    return false;
+  }
+
+  /** Picks the nearest sizeable open room (halls first) so a stuck bot has somewhere to actually breathe. */
+  private pickEscapeTarget(): Point {
+    const self = this.character;
+    const halls = this.map.rooms.filter((r) => r.flavor === "hall");
+    const candidates = halls.length > 0 ? halls : this.map.rooms;
+
+    let best = candidates[0];
+    let bestScore = -Infinity;
+    for (const r of candidates) {
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      const dist = Math.hypot(cx - self.x, cy - self.y);
+      const score = (r.w * r.h) / (1 + dist / 400);
+      if (score > bestScore) {
+        bestScore = score;
+        best = r;
+      }
+    }
+    return { x: best.x + best.w / 2, y: best.y + best.h / 2 };
   }
 
   private engage(
