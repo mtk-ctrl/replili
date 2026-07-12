@@ -33,7 +33,6 @@ export class Character {
   private bowReadyAt = 0;
   private katanaReadyAt = 0;
   private pistolReadyAt = 0;
-  private walkPhase = 0;
 
   private scene: Phaser.Scene;
   private map: LabMap;
@@ -327,17 +326,6 @@ export class Character {
     }
 
     this.container.setPosition(this.x, this.y);
-
-    // Walk bob: hop the portrait while moving, keep the shadow planted.
-    const moving = Math.abs(this.moveDirX) + Math.abs(this.moveDirY) > 0.01;
-    if (moving) {
-      this.walkPhase += dtSeconds * 12;
-    } else {
-      this.walkPhase = 0;
-    }
-    const bob = Math.abs(Math.sin(this.walkPhase)) * 3;
-    this.portrait.setY(-bob);
-    this.shadow.setScale(1 - bob * 0.03);
 
     const handDist = this.radius + 10;
     const handX = Math.cos(this.facing) * handDist;

@@ -80,7 +80,7 @@ export class MainScene extends Phaser.Scene {
   private minimap!: Minimap;
   private readonly ZOOM = 1.47;
   private playerLight!: Phaser.GameObjects.Image;
-  private torches: { x: number; y: number; glowTween: Phaser.Tweens.Tween; flameTween: Phaser.Tweens.Tween; active: boolean }[] = [];
+  private torches: { x: number; y: number; flameTween: Phaser.Tweens.Tween; active: boolean }[] = [];
   private nextTorchVisibilityCheckAt = 0;
   private previousFlagOwners: Map<Flag, string> = new Map();
   private flagCaptureAnnouncementText: Phaser.GameObjects.Text | null = null;
@@ -246,29 +246,20 @@ export class MainScene extends Phaser.Scene {
   /** Animated flames + flickering warm glows layered over the sconces baked into the map. */
   private createTorchFlames(): void {
     for (const t of this.labMap.torchSpawns) {
+      // Glow no longer flickers — fixed at the flicker's mid-brightness/scale instead of tweening.
       const glow = this.add
         .image(t.x, t.y + 6, "fx-glow")
         .setTint(0xff9a3c)
         .setBlendMode(Phaser.BlendModes.ADD)
-        .setAlpha(0.26)
-        .setScale(1.05);
+        .setAlpha(0.27)
+        .setScale(1.1);
       const flame = this.add.image(t.x, t.y - 4, "fx-flame").setOrigin(0.5, 0.7);
       this.worldContainer.add(glow);
       this.worldContainer.add(flame);
 
       const jitter = Math.random();
-      // Tweens start paused — updateTorchVisibility() only resumes ones near the camera,
-      // since idle flicker tweens for every torch on the map (even undiscovered ones) add up fast.
-      const glowTween = this.tweens.add({
-        targets: glow,
-        alpha: { from: 0.2, to: 0.34 },
-        scale: { from: 0.95, to: 1.25 },
-        duration: 240 + jitter * 260,
-        yoyo: true,
-        repeat: -1,
-        ease: "Sine.easeInOut",
-        paused: true,
-      });
+      // Flame keeps its flicker — only resumed for torches near the camera, since idle
+      // flicker tweens for every torch on the map (even undiscovered ones) add up fast.
       const flameTween = this.tweens.add({
         targets: flame,
         scaleY: { from: 0.9, to: 1.12 },
@@ -280,11 +271,11 @@ export class MainScene extends Phaser.Scene {
         paused: true,
       });
 
-      this.torches.push({ x: t.x, y: t.y, glowTween, flameTween, active: false });
+      this.torches.push({ x: t.x, y: t.y, flameTween, active: false });
     }
   }
 
-  /** Resumes flicker tweens only for torches within (a margin around) the current camera view; pauses the rest. */
+  /** Resumes the flame flicker only for torches within (a margin around) the current camera view; pauses the rest. */
   private updateTorchVisibility(now: number): void {
     if (now < this.nextTorchVisibilityCheckAt) return;
     this.nextTorchVisibilityCheckAt = now + 300;
@@ -303,11 +294,9 @@ export class MainScene extends Phaser.Scene {
       const visible = torch.x >= left && torch.x <= right && torch.y >= top && torch.y <= bottom;
       if (visible && !torch.active) {
         torch.active = true;
-        torch.glowTween.resume();
         torch.flameTween.resume();
       } else if (!visible && torch.active) {
         torch.active = false;
-        torch.glowTween.pause();
         torch.flameTween.pause();
       }
     }

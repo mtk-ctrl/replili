@@ -14,7 +14,6 @@ export class Flag {
 
   private capturingTeam: TeamId | null = null;
   private progress = 0;
-  private waveTime = 0;
 
   readonly container: Phaser.GameObjects.Container;
   private readonly gfx: Phaser.GameObjects.Graphics;
@@ -49,13 +48,18 @@ export class Flag {
   }
 
   update(dtSeconds: number, teamsPresent: Record<TeamId, boolean>): void {
-    this.waveTime += dtSeconds;
+    const prevOwner = this.owner;
     const bothPresent = teamsPresent.red && teamsPresent.blue;
     if (!bothPresent) {
       if (teamsPresent.red) this.progressTowards("red", dtSeconds);
       else if (teamsPresent.blue) this.progressTowards("blue", dtSeconds);
     }
-    this.redraw();
+
+    // The banner is static now, so only redraw while a capture ring is actively
+    // animating or the owner just flipped — otherwise nothing on screen changed.
+    if (this.capturingTeam !== null || this.owner !== prevOwner) {
+      this.redraw();
+    }
   }
 
   private progressTowards(team: TeamId, dt: number): void {
@@ -99,7 +103,7 @@ export class Flag {
     g.fillStyle(0xd4af37, 1);
     g.fillCircle(0, -46, 3.5);
 
-    // Waving banner: sampled ribbon from the pole top, rippled by time
+    // Static banner: sampled ribbon from the pole top (no more per-frame ripple animation).
     const BANNER_W = 30;
     const BANNER_H = 18;
     const SEGMENTS = 10;
@@ -108,9 +112,8 @@ export class Flag {
     for (let i = 0; i <= SEGMENTS; i++) {
       const t = i / SEGMENTS;
       const wx = 2 + t * BANNER_W;
-      const ripple = Math.sin(this.waveTime * 5 - t * 4) * 2.6 * t;
-      top.push({ x: wx, y: -44 + ripple });
-      bottom.push({ x: wx, y: -44 + BANNER_H * (1 - t * 0.25) + ripple });
+      top.push({ x: wx, y: -44 });
+      bottom.push({ x: wx, y: -44 + BANNER_H * (1 - t * 0.25) });
     }
 
     g.fillStyle(color, 1);

@@ -44,14 +44,6 @@ export class Workbench {
       repeat: -1,
       ease: "Sine.easeInOut",
     });
-
-    scene.tweens.add({
-      targets: this.sawBlade,
-      rotation: Math.PI * 2,
-      duration: 6000,
-      repeat: -1,
-      ease: "Linear",
-    });
   }
 
   /** Sturdy plank tabletop on legs, with a clamped board and a tool rack along the back edge. */
