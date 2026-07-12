@@ -34,8 +34,8 @@ export interface Room {
 
 const GRID_COLS = 7;
 const GRID_ROWS = 7;
-const CELL_W = 320;
-const CELL_H = 240;
+const BASE_CELL_W = 320;
+const BASE_CELL_H = 240;
 const WALL_PAD = 12;
 const HALL_PAD = 4;
 const DOOR_SIZE = 52;
@@ -69,8 +69,10 @@ interface CellEdge {
 }
 
 export class LabMap {
-  readonly width = GRID_COLS * CELL_W;
-  readonly height = GRID_ROWS * CELL_H;
+  readonly width: number;
+  readonly height: number;
+  private readonly cellW: number;
+  private readonly cellH: number;
   readonly flagSpawns: Point[] = [];
   readonly treasureSpawns: Point[] = [];
   /** Wall-torch positions gathered during render; MainScene attaches animated flames/glows here. */
@@ -85,7 +87,14 @@ export class LabMap {
   private nodePos: Point[] = [];
   private adjacency: number[][] = [];
 
-  constructor(seed = 20260706) {
+  /** areaScale=4 (the "拡張" mode) doubles each linear dimension so total floor area is ~4x. */
+  constructor(seed = 20260706, areaScale = 1, desiredTreasureCount = 4) {
+    const linearScale = Math.sqrt(areaScale);
+    this.cellW = BASE_CELL_W * linearScale;
+    this.cellH = BASE_CELL_H * linearScale;
+    this.width = GRID_COLS * this.cellW;
+    this.height = GRID_ROWS * this.cellH;
+
     const rng = mulberry32(seed);
     const cellId = (col: number, row: number) => row * GRID_COLS + col;
     const centerCol = Math.floor(GRID_COLS / 2);
@@ -127,7 +136,7 @@ export class LabMap {
     reservedRoomIds.add(cellToBlock[cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
     const treasureRooms = this.rooms.filter(r => !reservedRoomIds.has(r.id));
     const treasureRng = mulberry32(seed + 7777);
-    const treasureCount = Math.min(12, Math.max(4, Math.floor(treasureRooms.length * 0.25)));
+    const treasureCount = Math.min(desiredTreasureCount, treasureRooms.length);
     for (let i = 0; i < treasureCount && treasureRooms.length > 0; i++) {
       const idx = Math.floor(treasureRng() * treasureRooms.length);
       const room = treasureRooms[idx];
@@ -314,10 +323,10 @@ export class LabMap {
 
       this.rooms.push({
         id: block.id,
-        x: minCol * CELL_W + pad,
-        y: minRow * CELL_H + pad,
-        w: (maxCol - minCol + 1) * CELL_W - pad * 2,
-        h: (maxRow - minRow + 1) * CELL_H - pad * 2,
+        x: minCol * this.cellW + pad,
+        y: minRow * this.cellH + pad,
+        w: (maxCol - minCol + 1) * this.cellW - pad * 2,
+        h: (maxRow - minRow + 1) * this.cellH - pad * 2,
         flavor,
         doors: [],
       });
@@ -332,7 +341,7 @@ export class LabMap {
       const roomB = this.rooms[edge.blockB];
 
       if (edge.dir === "east") {
-        const doorY = edge.cellA.row * CELL_H + CELL_H / 2;
+        const doorY = edge.cellA.row * this.cellH + this.cellH / 2;
         const gapStart = roomA.x + roomA.w;
         const gapEnd = roomB.x;
         this.connectors.push({ x: gapStart, y: doorY - DOOR_SIZE / 2, w: gapEnd - gapStart, h: DOOR_SIZE });
@@ -341,7 +350,7 @@ export class LabMap {
         roomB.doors.push({ x: gapEnd, y: doorY, targetRoomId: roomA.id, direction: "west" });
         this.doorways.push({ x: (gapStart + gapEnd) / 2, y: doorY, direction: "east" });
       } else {
-        const doorX = edge.cellA.col * CELL_W + CELL_W / 2;
+        const doorX = edge.cellA.col * this.cellW + this.cellW / 2;
         const gapStart = roomA.y + roomA.h;
         const gapEnd = roomB.y;
         this.connectors.push({ x: doorX - DOOR_SIZE / 2, y: gapStart, w: DOOR_SIZE, h: gapEnd - gapStart });

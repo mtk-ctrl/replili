@@ -84,12 +84,6 @@ export class MainScene extends Phaser.Scene {
     createProceduralTextures(this);
     this.worldContainer = this.add.container(0, 0);
 
-    const mapSeeds = [20260706, 20260707, 20260708, 20260709, 20260710];
-    const randomSeed = mapSeeds[Math.floor(Math.random() * mapSeeds.length)];
-    this.labMap = new LabMap(randomSeed);
-    this.labMap.render(this, this.worldContainer);
-    this.createTorchFlames();
-
     this.roster = {
       red: { human: null, bots: [] },
       blue: { human: null, bots: [] },
@@ -97,13 +91,10 @@ export class MainScene extends Phaser.Scene {
 
     this.setupInput();
     this.setupHud();
-    this.minimap = new Minimap(this, this.labMap, this.scale.width - 170, this.scale.height - 150);
     this.showTitleScreen();
-    this.updateCameraContainer();
 
     (window as any).__debug = {
       scene: this,
-      labMap: this.labMap,
       roster: this.roster,
       flags: this.flags,
       arrows: this.arrows,
@@ -114,13 +105,21 @@ export class MainScene extends Phaser.Scene {
     this.gameMode = mode;
     const modeConfig = GAME_MODE_CONFIG[mode];
 
+    const mapSeeds = [20260706, 20260707, 20260708, 20260709, 20260710];
+    const randomSeed = mapSeeds[Math.floor(Math.random() * mapSeeds.length)];
+    this.labMap = new LabMap(randomSeed, modeConfig.MAP_SCALE, modeConfig.TREASURE_COUNT);
+    this.labMap.render(this, this.worldContainer);
+    this.createTorchFlames();
+    this.minimap = new Minimap(this, this.labMap, this.scale.width - 170, this.scale.height - 150);
+    (window as any).__debug.labMap = this.labMap;
+
     this.flags = this.labMap.flagSpawns.slice(0, modeConfig.FLAG_COUNT).map((spawn) => {
       const flag = new Flag(this, spawn.x, spawn.y);
       this.worldContainer.add(flag.container);
       return flag;
     });
 
-    this.treasures = this.labMap.treasureSpawns.slice(0, modeConfig.TREASURE_COUNT).map((spawn) => {
+    this.treasures = this.labMap.treasureSpawns.map((spawn) => {
       const treasure = new Treasure(this, spawn.x, spawn.y);
       this.worldContainer.add(treasure.container);
       return treasure;
@@ -143,12 +142,12 @@ export class MainScene extends Phaser.Scene {
     this.worldContainer.add(this.playerLight);
 
     this.match = new MatchManager(modeConfig.MATCH_SECONDS);
-    this.gameStarted = true;
+    this.updateCameraContainer();
   }
 
   update(time: number, delta: number): void {
-    this.updateCameraContainer();
     if (!this.gameStarted) return;
+    this.updateCameraContainer();
 
     const dt = delta / 1000;
 
@@ -299,23 +298,27 @@ export class MainScene extends Phaser.Scene {
       right: keyboard.addKey("D"),
     };
 
-    keyboard.addKey("ONE").on("down", () => this.player.switchWeapon("sword"));
-    keyboard.addKey("TWO").on("down", () => this.player.switchWeapon("bow"));
+    keyboard.addKey("ONE").on("down", () => {
+      if (this.gameStarted) this.player.switchWeapon("sword");
+    });
+    keyboard.addKey("TWO").on("down", () => {
+      if (this.gameStarted) this.player.switchWeapon("bow");
+    });
     keyboard.addKey("THREE").on("down", () => {
-      if (this.player.grenadeCount > 0) this.player.switchWeapon("grenade");
+      if (this.gameStarted && this.player.grenadeCount > 0) this.player.switchWeapon("grenade");
     });
     keyboard.addKey("FOUR").on("down", () => {
-      if (this.player.katanaCount > 0) this.player.switchWeapon("katana");
+      if (this.gameStarted && this.player.katanaCount > 0) this.player.switchWeapon("katana");
     });
     keyboard.addKey("FIVE").on("down", () => {
-      if (this.player.mineCount > 0) this.player.switchWeapon("grenade"); // Use grenade slot for mine
+      if (this.gameStarted && this.player.mineCount > 0) this.player.switchWeapon("grenade"); // Use grenade slot for mine
     });
 
     keyboard.addKey("E").on("down", () => this.tryOpenTreasure());
 
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      if (this.match.isOver || !this.gameStarted) return;
+      if (!this.gameStarted || this.match.isOver) return;
       if (!pointer.leftButtonDown()) return;
 
       if (this.player.weapon === "sword") {
@@ -329,7 +332,6 @@ export class MainScene extends Phaser.Scene {
         }
       } else if (this.player.weapon === "katana") {
         if (this.player.startKatanaSwing(this.time.now)) this.applyKatanaHit(this.player);
-      }
       }
     });
   }
