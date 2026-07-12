@@ -106,6 +106,8 @@ export class LabMap {
   private doorways: { x: number; y: number; direction: Door["direction"] }[] = [];
   private nodePos: Point[] = [];
   private adjacency: number[][] = [];
+  /** Grid-cell -> room-id lookup so getRoomAt/isFree are O(1) instead of scanning every room. */
+  private cellToRoomId: number[] = [];
 
   /**
    * Extended mode keeps cellScale modest (~1.5x room size) but grows the grid
@@ -148,6 +150,7 @@ export class LabMap {
     const edges = this.buildMaze(rng, cellToBlock, blocks.length);
     this.generateRooms(blocks, edges, reservedCellIds, cellToBlock);
     this.setupPathfinding();
+    this.cellToRoomId = cellToBlock;
 
     const redBlock = cellToBlock[cellId(0, 0)];
     const blueBlock = cellToBlock[cellId(this.gridCols - 1, this.gridRows - 1)];
@@ -489,12 +492,17 @@ export class LabMap {
     }
   }
 
+  /** O(1) grid-cell lookup instead of scanning every room — this is the hottest path in the game (called for every character's per-frame collision check and every bot line-of-sight sample). */
   getRoomAt(x: number, y: number): Room | null {
-    for (const room of this.rooms) {
-      if (x >= room.x && x <= room.x + room.w && y >= room.y && y <= room.y + room.h) {
-        return room;
-      }
-    }
+    const col = Math.floor(x / this.cellW);
+    const row = Math.floor(y / this.cellH);
+    if (col < 0 || col >= this.gridCols || row < 0 || row >= this.gridRows) return null;
+
+    const roomId = this.cellToRoomId[row * this.gridCols + col];
+    if (roomId === undefined || roomId === -1) return null;
+
+    const room = this.rooms[roomId];
+    if (x >= room.x && x <= room.x + room.w && y >= room.y && y <= room.y + room.h) return room;
     return null;
   }
 

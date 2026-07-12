@@ -80,6 +80,8 @@ export class MainScene extends Phaser.Scene {
   private minimap!: Minimap;
   private readonly ZOOM = 1.47;
   private playerLight!: Phaser.GameObjects.Image;
+  private torches: { x: number; y: number; glowTween: Phaser.Tweens.Tween; flameTween: Phaser.Tweens.Tween; active: boolean }[] = [];
+  private nextTorchVisibilityCheckAt = 0;
   private previousFlagOwners: Map<Flag, string> = new Map();
   private flagCaptureAnnouncementText: Phaser.GameObjects.Text | null = null;
   private flagScaleAnimTargetTeam: TeamId | null = null;
@@ -192,6 +194,7 @@ export class MainScene extends Phaser.Scene {
   update(time: number, delta: number): void {
     if (!this.gameStarted) return;
     this.updateCameraContainer();
+    this.updateTorchVisibility(time);
 
     const dt = delta / 1000;
 
@@ -254,7 +257,9 @@ export class MainScene extends Phaser.Scene {
       this.worldContainer.add(flame);
 
       const jitter = Math.random();
-      this.tweens.add({
+      // Tweens start paused — updateTorchVisibility() only resumes ones near the camera,
+      // since idle flicker tweens for every torch on the map (even undiscovered ones) add up fast.
+      const glowTween = this.tweens.add({
         targets: glow,
         alpha: { from: 0.2, to: 0.34 },
         scale: { from: 0.95, to: 1.25 },
@@ -262,8 +267,9 @@ export class MainScene extends Phaser.Scene {
         yoyo: true,
         repeat: -1,
         ease: "Sine.easeInOut",
+        paused: true,
       });
-      this.tweens.add({
+      const flameTween = this.tweens.add({
         targets: flame,
         scaleY: { from: 0.9, to: 1.12 },
         scaleX: { from: 1, to: 0.88 },
@@ -271,7 +277,39 @@ export class MainScene extends Phaser.Scene {
         yoyo: true,
         repeat: -1,
         ease: "Sine.easeInOut",
+        paused: true,
       });
+
+      this.torches.push({ x: t.x, y: t.y, glowTween, flameTween, active: false });
+    }
+  }
+
+  /** Resumes flicker tweens only for torches within (a margin around) the current camera view; pauses the rest. */
+  private updateTorchVisibility(now: number): void {
+    if (now < this.nextTorchVisibilityCheckAt) return;
+    this.nextTorchVisibilityCheckAt = now + 300;
+
+    const halfViewW = this.scale.width / 2 / this.ZOOM;
+    const halfViewH = this.scale.height / 2 / this.ZOOM;
+    const camX = Phaser.Math.Clamp(this.player.x, halfViewW, this.labMap.width - halfViewW);
+    const camY = Phaser.Math.Clamp(this.player.y, halfViewH, this.labMap.height - halfViewH);
+    const margin = 140;
+    const left = camX - halfViewW - margin;
+    const right = camX + halfViewW + margin;
+    const top = camY - halfViewH - margin;
+    const bottom = camY + halfViewH + margin;
+
+    for (const torch of this.torches) {
+      const visible = torch.x >= left && torch.x <= right && torch.y >= top && torch.y <= bottom;
+      if (visible && !torch.active) {
+        torch.active = true;
+        torch.glowTween.resume();
+        torch.flameTween.resume();
+      } else if (!visible && torch.active) {
+        torch.active = false;
+        torch.glowTween.pause();
+        torch.flameTween.pause();
+      }
     }
   }
 
