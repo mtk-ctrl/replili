@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_CONFIG, type TeamId } from "../config";
+import type { TeamId } from "../config";
 
 interface Rect {
   x: number;
@@ -112,8 +112,8 @@ export class LabMap {
 
     // Select flag spawn locations from reserved cells (excluding team spawns)
     const teamSpawns = new Set([cellId(0, 0), cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
-    const availableFlagCells = [cellId(GRID_COLS - 1, 0), cellId(centerCol, centerRow), cellId(0, GRID_ROWS - 1), cellId(GRID_COLS - 1, centerRow), cellId(centerCol, GRID_ROWS - 1)];
-    for (let i = 0; i < GAME_CONFIG.FLAG_COUNT && i < availableFlagCells.length; i++) {
+    const availableFlagCells = [cellId(GRID_COLS - 1, 0), cellId(centerCol, centerRow), cellId(0, GRID_ROWS - 1), cellId(GRID_COLS - 1, centerRow), cellId(centerCol, GRID_ROWS - 1), cellId(1, 1), cellId(GRID_COLS - 2, 1), cellId(1, GRID_ROWS - 2), cellId(GRID_COLS - 2, GRID_ROWS - 2)];
+    for (let i = 0; i < Math.min(9, availableFlagCells.length); i++) {
       const fcid = availableFlagCells[i];
       if (!teamSpawns.has(fcid)) {
         const room = this.rooms[cellToBlock[fcid]];
@@ -127,7 +127,7 @@ export class LabMap {
     reservedRoomIds.add(cellToBlock[cellId(GRID_COLS - 1, GRID_ROWS - 1)]);
     const treasureRooms = this.rooms.filter(r => !reservedRoomIds.has(r.id));
     const treasureRng = mulberry32(seed + 7777);
-    const treasureCount = Math.min(6, Math.max(3, Math.floor(treasureRooms.length * 0.2)));
+    const treasureCount = Math.min(12, Math.max(4, Math.floor(treasureRooms.length * 0.25)));
     for (let i = 0; i < treasureCount && treasureRooms.length > 0; i++) {
       const idx = Math.floor(treasureRng() * treasureRooms.length);
       const room = treasureRooms[idx];

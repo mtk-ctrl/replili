@@ -1,13 +1,14 @@
 import Phaser from "phaser";
+import { GAME_CONFIG, type ItemType } from "../config";
 
-const SPRITE_SCALE = 2.75; // native tiles are 16x16 pixel art
+const SPRITE_SCALE = 2.75;
 
-/** A glowing, obviously-a-treasure-chest pickup. Only the human player can open it (see MainScene). */
 export class Treasure {
   x: number;
   y: number;
   opened = false;
   readonly radius = 24;
+  itemType: ItemType = "grenade";
 
   readonly container: Phaser.GameObjects.Container;
   private scene: Phaser.Scene;
@@ -25,6 +26,7 @@ export class Treasure {
     this.scene = scene;
     this.x = x;
     this.y = y;
+    this.itemType = this.rollItemType();
 
     this.glow = scene.add.circle(0, 2, 26, 0xffd94a, 0.4);
 
@@ -67,9 +69,16 @@ export class Treasure {
     });
   }
 
+  private rollItemType(): ItemType {
+    const rand = Math.random();
+    const rates = GAME_CONFIG.ITEM_DROP_RATES;
+    if (rand < rates.grenade) return "grenade";
+    if (rand < rates.grenade + rates.potion_swift) return "potion_swift";
+    if (rand < rates.grenade + rates.potion_swift + rates.katana) return "katana";
+    return "mine";
+  }
+
   setIndicatorVisible(visible: boolean): void {
-    // Showing is blocked once opened, but hiding must always be allowed —
-    // open() itself sets `opened` before asking to hide the indicator.
     if ((visible && this.opened) || visible === this.indicatorVisible) return;
     this.indicatorVisible = visible;
     this.indicator.setVisible(visible);
@@ -90,9 +99,8 @@ export class Treasure {
     }
   }
 
-  /** Plays the opening animation and returns whether a grenade was found (always true — every chest holds one). */
-  open(): boolean {
-    if (this.opened) return false;
+  open(): ItemType | null {
+    if (this.opened) return null;
     this.opened = true;
 
     this.setIndicatorVisible(false);
@@ -113,7 +121,7 @@ export class Treasure {
       ease: "Back.easeOut",
     });
 
-    return true;
+    return this.itemType;
   }
 
   destroy(): void {

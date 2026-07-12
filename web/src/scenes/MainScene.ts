@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GAME_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId } from "../config";
+import { GAME_CONFIG, GAME_MODE_CONFIG, OTHER_TEAM, TEAM_COLOR, TeamId, type GameMode } from "../config";
 import { LabMap } from "../world/LabMap";
 import { Flag } from "../entities/Flag";
 import { Arrow } from "../entities/Arrow";
@@ -9,6 +9,9 @@ import { BotAI } from "../entities/BotAI";
 import { MatchManager } from "../match/MatchManager";
 import { Minimap } from "../ui/Minimap";
 import { Treasure } from "../entities/Treasure";
+import { Potion } from "../entities/Potion";
+import { Katana } from "../entities/Katana";
+import { Mine } from "../entities/Mine";
 import { createProceduralTextures } from "../world/TextureFactory";
 
 interface TeamRoster {
@@ -20,12 +23,16 @@ export class MainScene extends Phaser.Scene {
   private labMap!: LabMap;
   private flags: Flag[] = [];
   private treasures: Treasure[] = [];
+  private potions: Potion[] = []; // Potions that spawn from treasures
+  private katanas: Katana[] = []; // Katanas that spawn from treasures
+  private mines: Mine[] = []; // Mines that spawn from treasures
   private arrows: Arrow[] = [];
   private grenades: Grenade[] = [];
   private roster!: Record<TeamId, TeamRoster>;
   private player!: Character;
   private match!: MatchManager;
   private gameStarted = false;
+  private gameMode: GameMode = "normal"; // Current game mode (normal or extended)
   private titleScreen!: Phaser.GameObjects.Container;
   private visitedRooms = new Set<number>();
   private currentRoom: number | null = null;
@@ -46,6 +53,10 @@ export class MainScene extends Phaser.Scene {
   private hotbarSlots: Phaser.GameObjects.Rectangle[] = [];
   private grenadeSlotObjects: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
   private grenadeCountText!: Phaser.GameObjects.Text;
+  private katanaCountText!: Phaser.GameObjects.Text; // For displaying remaining katana uses
+  private mineCountText!: Phaser.GameObjects.Text; // For displaying mine count
+  private swiftStatusText!: Phaser.GameObjects.Text; // For displaying swift potion status
+  private katanaUsesText!: Phaser.GameObjects.Text; // For displaying remaining uses
   private treasurePromptText!: Phaser.GameObjects.Text;
   private nearbyTreasure: Treasure | null = null;
   private worldContainer!: Phaser.GameObjects.Container;
@@ -71,49 +82,19 @@ export class MainScene extends Phaser.Scene {
 
   create(): void {
     createProceduralTextures(this);
+    this.worldContainer = this.add.container(0, 0);
 
     const mapSeeds = [20260706, 20260707, 20260708, 20260709, 20260710];
     const randomSeed = mapSeeds[Math.floor(Math.random() * mapSeeds.length)];
     this.labMap = new LabMap(randomSeed);
-    this.worldContainer = this.add.container(0, 0);
     this.labMap.render(this, this.worldContainer);
     this.createTorchFlames();
-
-    this.flags = this.labMap.flagSpawns.map((spawn) => {
-      const flag = new Flag(this, spawn.x, spawn.y);
-      this.worldContainer.add(flag.container);
-      return flag;
-    });
-
-    this.treasures = this.labMap.treasureSpawns.map((spawn) => {
-      const treasure = new Treasure(this, spawn.x, spawn.y);
-      this.worldContainer.add(treasure.container);
-      return treasure;
-    });
 
     this.roster = {
       red: { human: null, bots: [] },
       blue: { human: null, bots: [] },
     };
 
-    const redSpawn = this.labMap.baseSpawns.red;
-    this.player = new Character(this, this.labMap, "red", redSpawn.x, redSpawn.y, true);
-    this.worldContainer.add(this.player.container);
-    this.roster.red.human = this.player;
-
-    for (let i = 1; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("red", i);
-    for (let i = 0; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("blue", i);
-
-    // Warm light pool following the player — cheap fake torchlight.
-    this.playerLight = this.add
-      .image(this.player.x, this.player.y, "fx-glow")
-      .setScale(3.4)
-      .setAlpha(0.13)
-      .setTint(0xffd9a0)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    this.worldContainer.add(this.playerLight);
-
-    this.match = new MatchManager(GAME_CONFIG.MATCH_SECONDS);
     this.setupInput();
     this.setupHud();
     this.minimap = new Minimap(this, this.labMap, this.scale.width - 170, this.scale.height - 150);
@@ -127,6 +108,42 @@ export class MainScene extends Phaser.Scene {
       flags: this.flags,
       arrows: this.arrows,
     };
+  }
+
+  private startGame(mode: GameMode): void {
+    this.gameMode = mode;
+    const modeConfig = GAME_MODE_CONFIG[mode];
+
+    this.flags = this.labMap.flagSpawns.slice(0, modeConfig.FLAG_COUNT).map((spawn) => {
+      const flag = new Flag(this, spawn.x, spawn.y);
+      this.worldContainer.add(flag.container);
+      return flag;
+    });
+
+    this.treasures = this.labMap.treasureSpawns.slice(0, modeConfig.TREASURE_COUNT).map((spawn) => {
+      const treasure = new Treasure(this, spawn.x, spawn.y);
+      this.worldContainer.add(treasure.container);
+      return treasure;
+    });
+
+    const redSpawn = this.labMap.baseSpawns.red;
+    this.player = new Character(this, this.labMap, "red", redSpawn.x, redSpawn.y, true);
+    this.worldContainer.add(this.player.container);
+    this.roster.red.human = this.player;
+
+    for (let i = 1; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("red", i);
+    for (let i = 0; i < GAME_CONFIG.PLAYERS_PER_TEAM; i++) this.spawnBot("blue", i);
+
+    this.playerLight = this.add
+      .image(this.player.x, this.player.y, "fx-glow")
+      .setScale(3.4)
+      .setAlpha(0.13)
+      .setTint(0xffd9a0)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.worldContainer.add(this.playerLight);
+
+    this.match = new MatchManager(modeConfig.MATCH_SECONDS);
+    this.gameStarted = true;
   }
 
   update(time: number, delta: number): void {
@@ -156,10 +173,58 @@ export class MainScene extends Phaser.Scene {
     this.playerLight.setVisible(this.player.alive);
 
     this.match.tick(delta, this.flags);
+    this.updateItems();
     this.updateHud();
     this.applyFOVCulling();
     this.updateTreasureProximity();
     this.updateMinimap();
+  }
+
+  private updateItems(): void {
+    const now = this.time.now;
+
+    // Check if katana is broken (no uses left)
+    if (this.player.weapon === "katana" && this.player.katanaUsesRemaining <= 0) {
+      this.spawnFloatingText(this.player.x, this.player.y - 20, "日本刀が壊れた！", "#ff4444");
+      this.player.katanaCount = 0;
+      this.player.switchWeapon("sword");
+    }
+
+    // Update potion status display
+    const hasSwiftActive = this.player.potionSwiftEndTime > now;
+    if (hasSwiftActive && !this.swiftStatusText.visible) {
+      this.swiftStatusText.setVisible(true);
+    } else if (!hasSwiftActive && this.swiftStatusText.visible) {
+      this.swiftStatusText.setVisible(false);
+    }
+
+    if (hasSwiftActive) {
+      const remainingMs = this.player.potionSwiftEndTime - now;
+      const remainingS = Math.ceil(remainingMs / 1000);
+      this.swiftStatusText.setText(`⚡ 俊足 ${remainingS}s`);
+    }
+
+    // Update katana uses display
+    if (this.player.katanaCount > 0 && !this.katanaUsesText.visible) {
+      this.katanaUsesText.setVisible(true);
+    } else if (this.player.katanaCount === 0 && this.katanaUsesText.visible) {
+      this.katanaUsesText.setVisible(false);
+    }
+
+    if (this.player.katanaCount > 0) {
+      this.katanaUsesText.setText(`⚔️ 日本刀 ${this.player.katanaUsesRemaining}/${GAME_CONFIG.KATANA.MAX_USES}`);
+    }
+
+    // Update mine count display
+    if (this.player.mineCount > 0 && !this.mineCountText.visible) {
+      this.mineCountText.setVisible(true);
+    } else if (this.player.mineCount === 0 && this.mineCountText.visible) {
+      this.mineCountText.setVisible(false);
+    }
+
+    if (this.player.mineCount > 0) {
+      this.mineCountText.setText(`💣 地雷 X${this.player.mineCount}`);
+    }
   }
 
   /** Animated flames + flickering warm glows layered over the sconces baked into the map. */
@@ -325,6 +390,41 @@ export class MainScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(100)
       .setVisible(false);
+
+    // Swift potion status (top-right corner)
+    this.swiftStatusText = this.add
+      .text(this.scale.width - 20, 20, "", {
+        fontFamily: "monospace",
+        fontSize: "13px",
+        color: "#7c3aed",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(100)
+      .setVisible(false);
+
+    // Katana uses and mine count (top-right, below swift status)
+    this.katanaUsesText = this.add
+      .text(this.scale.width - 20, 40, "", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#ef4444",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(100)
+      .setVisible(false);
+
+    this.mineCountText = this.add
+      .text(this.scale.width - 20, 58, "", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#94a3b8",
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(100)
+      .setVisible(false);
   }
 
   private setupHotbar(): void {
@@ -424,7 +524,6 @@ export class MainScene extends Phaser.Scene {
 
     const bg = this.add.image(0, 0, "title-bg").setOrigin(0, 0).setScrollFactor(0);
 
-    // Embers drifting up from the bottom of the screen
     const embers = this.add.particles(0, 0, "fx-spark", {
       x: { min: 0, max: this.scale.width },
       y: this.scale.height + 10,
@@ -480,42 +579,63 @@ export class MainScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0);
 
-    // Ornate start button
-    const btnW = 220;
-    const btnH = 58;
-    const btnY = cy + 70;
-    const button = this.add.graphics().setScrollFactor(0);
-    const drawButton = (hover: boolean) => {
-      button.clear();
-      button.fillStyle(hover ? 0x33405e : 0x263048, 0.95);
-      button.fillRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-      button.lineStyle(2, 0xd4af37, hover ? 1 : 0.75);
-      button.strokeRoundedRect(cx - btnW / 2, btnY - btnH / 2, btnW, btnH, 12);
-      button.lineStyle(1, 0xd4af37, 0.35);
-      button.strokeRoundedRect(cx - btnW / 2 + 4, btnY - btnH / 2 + 4, btnW - 8, btnH - 8, 9);
-    };
-    drawButton(false);
-
-    const buttonText = this.add
-      .text(cx, btnY, "⚔  START GAME", {
+    // Difficulty selection text
+    const difficultyLabel = this.add
+      .text(cx, cy + 30, "難易度を選択", {
         fontFamily: "georgia, serif",
-        fontSize: "20px",
-        color: "#f5e6c4",
+        fontSize: "18px",
+        color: "#d4af37",
         align: "center",
-        fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setScrollFactor(0);
 
-    const hitZone = this.add
-      .zone(cx, btnY, btnW, btnH)
-      .setScrollFactor(0)
-      .setInteractive({ useHandCursor: true })
-      .on("pointerover", () => drawButton(true))
-      .on("pointerout", () => drawButton(false))
-      .on("pointerdown", () => this.startGame());
+    // Two difficulty buttons
+    const btnW = 160;
+    const btnH = 50;
+    const btnSpacing = 200;
+    const btnY = cy + 90;
 
-    // Gentle breathing on the title
+    const createButton = (x: number, label: string, mode: GameMode) => {
+      const button = this.add.graphics().setScrollFactor(0);
+      const buttonText = this.add
+        .text(x, btnY, label, {
+          fontFamily: "georgia, serif",
+          fontSize: "16px",
+          color: "#f5e6c4",
+          align: "center",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0);
+
+      const drawButton = (hover: boolean) => {
+        button.clear();
+        button.fillStyle(hover ? 0x33405e : 0x263048, 0.95);
+        button.fillRoundedRect(x - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+        button.lineStyle(2, 0xd4af37, hover ? 1 : 0.75);
+        button.strokeRoundedRect(x - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+      };
+      drawButton(false);
+
+      const hitZone = this.add
+        .zone(x, btnY, btnW, btnH)
+        .setScrollFactor(0)
+        .setInteractive({ useHandCursor: true })
+        .on("pointerover", () => drawButton(true))
+        .on("pointerout", () => drawButton(false))
+        .on("pointerdown", () => {
+          if (this.titleScreen) this.titleScreen.destroy();
+          this.startGame(mode);
+          this.showCountdown();
+        });
+
+      return { button, buttonText, hitZone };
+    };
+
+    const normalBtn = createButton(cx - btnSpacing / 2, "通常", "normal");
+    const extendedBtn = createButton(cx + btnSpacing / 2, "拡張（試作）", "extended");
+
     this.tweens.add({
       targets: [titleText, titleGlow],
       scaleX: { from: 1, to: 1.02 },
@@ -533,16 +653,15 @@ export class MainScene extends Phaser.Scene {
       titleText,
       rule,
       subtitleText,
-      button,
-      buttonText,
-      hitZone,
+      difficultyLabel,
+      normalBtn.button,
+      normalBtn.buttonText,
+      normalBtn.hitZone,
+      extendedBtn.button,
+      extendedBtn.buttonText,
+      extendedBtn.hitZone,
     ]);
     this.titleScreen.setDepth(200);
-  }
-
-  private startGame(): void {
-    this.titleScreen.destroy();
-    this.showCountdown();
   }
 
   private showCountdown(): void {
@@ -1019,13 +1138,30 @@ export class MainScene extends Phaser.Scene {
     if (!this.gameStarted || this.match.isOver || !this.nearbyTreasure) return;
 
     const treasure = this.nearbyTreasure;
-    const gotGrenade = treasure.open();
-    if (gotGrenade) {
-      this.player.addGrenade();
-      this.spawnFloatingText(treasure.x, treasure.y - 40, "手榴弾を1個獲得！", "#ffd700");
-    } else {
-      this.spawnFloatingText(treasure.x, treasure.y - 40, "ハズレ…", "#aaaaaa");
+    const itemType = treasure.open();
+    if (!itemType) return;
+
+    let message = "";
+    switch (itemType) {
+      case "grenade":
+        this.player.addGrenade();
+        message = "手榴弾を1個獲得！";
+        break;
+      case "potion_swift":
+        this.player.addPotionSwift();
+        message = "俊足のポーション 1分間移動速度UP！";
+        break;
+      case "katana":
+        this.player.addKatana();
+        message = `日本刀を獲得！ (使用回数: ${this.player.katanaUsesRemaining})`;
+        this.player.switchWeapon("katana");
+        break;
+      case "mine":
+        this.player.addMine();
+        message = "地雷を1個獲得！";
+        break;
     }
+    this.spawnFloatingText(treasure.x, treasure.y - 40, message, "#ffd700");
 
     this.nearbyTreasure = null;
     this.treasurePromptText.setVisible(false);

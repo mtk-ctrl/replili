@@ -55,19 +55,17 @@ export class Minimap {
       }
     }
 
-    // Draw player
-    this.drawCharacter(player, TEAM_COLOR[player.team], 2);
+    // Draw player (yellow)
+    this.drawCharacter(player, 0xf6e58d, 2.5);
 
     // Draw allies
     for (const ally of allies) {
       if (ally.alive) this.drawCharacter(ally, TEAM_COLOR[ally.team], 1.5);
     }
 
-    // Draw visible enemies (enemies the player can see)
+    // Draw all enemies (always visible on minimap)
     for (const enemy of enemies) {
-      if (enemy.alive && this.isVisible(player, enemy)) {
-        this.drawCharacter(enemy, 0x3b82f6, 1.5);
-      }
+      if (enemy.alive) this.drawCharacter(enemy, TEAM_COLOR[enemy.team], 1.5);
     }
   }
 
@@ -77,10 +75,6 @@ export class Minimap {
     const y = character.y * this.scaleY;
     this.graphics.fillStyle(color, 1);
     this.graphics.fillCircle(x, y, radius);
-  }
-
-  private isVisible(player: Character, enemy: Character): boolean {
-    return this.map.hasLineOfSight(player.x, player.y, enemy.x, enemy.y);
   }
 
   destroy(): void {

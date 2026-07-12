@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { GAME_CONFIG, TEAM_COLOR, TeamId } from "../config";
 import type { LabMap } from "../world/LabMap";
 
-export type WeaponType = "sword" | "bow" | "grenade";
+export type WeaponType = "sword" | "bow" | "grenade" | "katana";
 
 /** Shared body for both the human player and bots: movement, health, and the sword/bow combat state machine. */
 export class Character {
@@ -18,6 +18,10 @@ export class Character {
   respawnAt = 0;
   weapon: WeaponType = "sword";
   grenadeCount = 0;
+  katanaCount = 0;
+  katanaUsesRemaining = 0;
+  mineCount = 0;
+  potionSwiftEndTime = 0;
 
   moveDirX = 0;
   moveDirY = 0;
@@ -26,6 +30,7 @@ export class Character {
   private knockbackVY = 0;
   private swordReadyAt = 0;
   private bowReadyAt = 0;
+  private katanaReadyAt = 0;
   private walkPhase = 0;
 
   private scene: Phaser.Scene;
@@ -90,6 +95,15 @@ export class Character {
     return this.bowReadyAt;
   }
 
+  get katanaCooldownEndsAt(): number {
+    return this.katanaReadyAt;
+  }
+
+  get speedMultiplier(): number {
+    const now = this.scene.time.now;
+    return this.potionSwiftEndTime > now ? GAME_CONFIG.POTION_SWIFT.SPEED_MULTIPLIER : 1;
+  }
+
   startSwordSwing(now: number): boolean {
     if (!this.alive) return false;
     if (now < this.swordReadyAt) return false;
@@ -104,6 +118,15 @@ export class Character {
     return true;
   }
 
+  startKatanaSwing(now: number): boolean {
+    if (!this.alive) return false;
+    if (this.katanaUsesRemaining <= 0) return false;
+    if (now < this.katanaReadyAt) return false;
+    this.katanaReadyAt = now + GAME_CONFIG.KATANA.COOLDOWN_MS;
+    this.katanaUsesRemaining--;
+    return true;
+  }
+
   switchWeapon(weapon: WeaponType): void {
     this.weapon = weapon;
     this.updateWeaponVisual();
@@ -113,11 +136,31 @@ export class Character {
   private updateWeaponVisual(): void {
     this.weaponSprite.setVisible(this.weapon === "sword");
     this.weaponEmoji.setVisible(this.weapon !== "sword");
-    this.weaponEmoji.setText(this.weapon === "bow" ? "🏹" : "💣");
+    if (this.weapon === "bow") {
+      this.weaponEmoji.setText("🏹");
+    } else if (this.weapon === "grenade") {
+      this.weaponEmoji.setText("💣");
+    } else if (this.weapon === "katana") {
+      this.weaponEmoji.setText("⚔️");
+    }
   }
 
   addGrenade(): void {
     this.grenadeCount += 1;
+  }
+
+  addKatana(): void {
+    this.katanaCount++;
+    this.katanaUsesRemaining = GAME_CONFIG.KATANA.MAX_USES;
+  }
+
+  addPotionSwift(): void {
+    const now = this.scene.time.now;
+    this.potionSwiftEndTime = now + GAME_CONFIG.POTION_SWIFT.DURATION_MS;
+  }
+
+  addMine(): void {
+    this.mineCount++;
   }
 
   applyDamage(amount: number, fromX: number, fromY: number): void {
@@ -204,7 +247,9 @@ export class Character {
     this.knockbackVY = 0;
     this.swordReadyAt = 0;
     this.bowReadyAt = 0;
+    this.katanaReadyAt = 0;
     this.grenadeCount = 0;
+    this.mineCount = 0;
     this.container.setVisible(true);
     this.container.setPosition(x, y);
     this.spawnRespawnRing();
@@ -230,8 +275,8 @@ export class Character {
   update(dtSeconds: number): void {
     if (!this.alive) return;
 
-    let vx = this.moveDirX * GAME_CONFIG.MOVE_SPEED;
-    let vy = this.moveDirY * GAME_CONFIG.MOVE_SPEED;
+    let vx = this.moveDirX * GAME_CONFIG.MOVE_SPEED * this.speedMultiplier;
+    let vy = this.moveDirY * GAME_CONFIG.MOVE_SPEED * this.speedMultiplier;
 
     const kbSpeed = Math.hypot(this.knockbackVX, this.knockbackVY);
     if (kbSpeed > 4) {
