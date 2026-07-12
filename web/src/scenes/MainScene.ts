@@ -82,6 +82,10 @@ export class MainScene extends Phaser.Scene {
   private playerLight!: Phaser.GameObjects.Image;
   private torches: { x: number; y: number; flameTween: Phaser.Tweens.Tween; active: boolean }[] = [];
   private nextTorchVisibilityCheckAt = 0;
+  /** Reused instead of create+destroy per hit, to cut GC churn during heavy combat. */
+  private hitImagePool: Phaser.GameObjects.Image[] = [];
+  private sparkEmitterSmall!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private sparkEmitterBig!: Phaser.GameObjects.Particles.ParticleEmitter;
   private previousFlagOwners: Map<Flag, string> = new Map();
   private flagCaptureAnnouncementText: Phaser.GameObjects.Text | null = null;
   private flagScaleAnimTargetTeam: TeamId | null = null;
@@ -110,6 +114,7 @@ export class MainScene extends Phaser.Scene {
 
     this.setupInput();
     this.setupHud();
+    this.setupEffectPools();
     this.showTitleScreen();
 
     (window as any).__debug = {
@@ -896,23 +901,9 @@ export class MainScene extends Phaser.Scene {
     });
   }
 
-  /** Shared "something got hit" burst — used for sword, arrows, and grenades. */
-  private spawnHitEffect(x: number, y: number, big = false): void {
-    const targetScale = big ? 0.75 : 0.28;
-    const img = this.add.image(x, y, "explosion").setDepth(60).setScale(targetScale * 0.4);
-    this.worldContainer.add(img);
-
-    this.tweens.add({
-      targets: img,
-      scaleX: { from: targetScale * 0.4, to: targetScale },
-      scaleY: { from: targetScale * 0.4, to: targetScale },
-      alpha: { from: 1, to: 0 },
-      duration: big ? 450 : 320,
-      ease: "Cubic.easeOut",
-      onComplete: () => img.destroy(),
-    });
-
-    const sparks = this.add.particles(x, y, "fx-spark", {
+  /** Two persistent emitters (small/big) reused via explode() instead of creating+destroying one per hit. */
+  private setupEffectPools(): void {
+    const config = (big: boolean): Phaser.Types.GameObjects.Particles.ParticleEmitterConfig => ({
       speed: { min: big ? 120 : 60, max: big ? 340 : 160 },
       lifespan: { min: 200, max: big ? 600 : 380 },
       scale: { start: big ? 1.8 : 1.1, end: 0 },
@@ -921,9 +912,44 @@ export class MainScene extends Phaser.Scene {
       blendMode: Phaser.BlendModes.ADD,
       emitting: false,
     });
-    this.worldContainer.add(sparks);
-    sparks.explode(big ? 26 : 8);
-    this.time.delayedCall(700, () => sparks.destroy());
+    this.sparkEmitterSmall = this.add.particles(0, 0, "fx-spark", config(false));
+    this.sparkEmitterBig = this.add.particles(0, 0, "fx-spark", config(true));
+    this.worldContainer.add(this.sparkEmitterSmall);
+    this.worldContainer.add(this.sparkEmitterBig);
+  }
+
+  private acquireHitImage(): Phaser.GameObjects.Image {
+    const pooled = this.hitImagePool.pop();
+    if (pooled) return pooled;
+    const img = this.add.image(0, 0, "explosion").setDepth(60);
+    this.worldContainer.add(img);
+    return img;
+  }
+
+  private releaseHitImage(img: Phaser.GameObjects.Image): void {
+    img.setVisible(false);
+    this.hitImagePool.push(img);
+  }
+
+  /** Shared "something got hit" burst — used for sword, arrows, and grenades. */
+  private spawnHitEffect(x: number, y: number, big = false): void {
+    const targetScale = big ? 0.75 : 0.28;
+    const img = this.acquireHitImage();
+    img.setPosition(x, y).setScale(targetScale * 0.4).setAlpha(1).setVisible(true);
+
+    this.tweens.add({
+      targets: img,
+      scaleX: { from: targetScale * 0.4, to: targetScale },
+      scaleY: { from: targetScale * 0.4, to: targetScale },
+      alpha: { from: 1, to: 0 },
+      duration: big ? 450 : 320,
+      ease: "Cubic.easeOut",
+      onComplete: () => this.releaseHitImage(img),
+    });
+
+    const emitter = big ? this.sparkEmitterBig : this.sparkEmitterSmall;
+    emitter.setPosition(x, y);
+    emitter.explode(big ? 26 : 8);
 
     if (big) {
       this.cameras.main.shake(180, 0.007);

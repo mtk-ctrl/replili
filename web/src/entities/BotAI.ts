@@ -24,6 +24,8 @@ const STRAFE_CHANGE_JITTER_MS = 700;
 const STUCK_CHECK_INTERVAL_MS = 5000;
 const STUCK_DIST_THRESHOLD = 50;
 const ESCAPE_DURATION_MS = 3000;
+const PERCEPTION_INTERVAL_MS = 120;
+const PERCEPTION_JITTER_MS = 60;
 
 /** Decision loop for a bot: mostly pushes toward contestable flags, only fights what it can actually see, sometimes ignores a fight to stay on task, and backs off when hurt. */
 export class BotAI {
@@ -42,13 +44,18 @@ export class BotAI {
   private stuckCheckPos: Point | null = null;
   private escapeTarget: Point | null = null;
   private escapeUntil = 0;
+  private nextPerceptionAt = 0;
+  private cachedVisibleEnemy: Character | null = null;
 
   constructor(
     private character: Character,
     private map: LabMap,
     private flags: Flag[],
     private baseSpawns: Record<TeamId, Point>
-  ) {}
+  ) {
+    // Stagger bots so they don't all re-scan for enemies on the same frame.
+    this.nextPerceptionAt = Math.random() * PERCEPTION_INTERVAL_MS;
+  }
 
   update(
     now: number,
@@ -66,7 +73,16 @@ export class BotAI {
 
     if (this.checkStuckAndMaybeEscape(now)) return;
 
-    const visibleEnemy = this.findNearestVisibleEnemy(enemies);
+    // The line-of-sight scan is the single most expensive thing a bot does — only
+    // re-run it every ~120-180ms (staggered per bot) and reuse the result between
+    // scans. Movement/attacks against the cached target still happen every frame.
+    if (now >= this.nextPerceptionAt) {
+      this.nextPerceptionAt = now + PERCEPTION_INTERVAL_MS + Math.random() * PERCEPTION_JITTER_MS;
+      this.cachedVisibleEnemy = this.findNearestVisibleEnemy(enemies);
+    } else if (this.cachedVisibleEnemy && !this.cachedVisibleEnemy.alive) {
+      this.cachedVisibleEnemy = null;
+    }
+    const visibleEnemy = this.cachedVisibleEnemy;
 
     if (visibleEnemy && self.hp / GAME_CONFIG.MAX_HEALTH <= FLEE_HP_RATIO) {
       this.flee(now, visibleEnemy, fireBow);

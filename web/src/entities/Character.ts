@@ -4,6 +4,31 @@ import type { LabMap } from "../world/LabMap";
 
 export type WeaponType = "sword" | "bow" | "grenade" | "katana" | "pistol";
 
+/** Shared across every Character (all in the same scene/worldContainer) to cut GC churn from combat. */
+const damageNumberPool: Phaser.GameObjects.Text[] = [];
+
+function acquireDamageNumber(scene: Phaser.Scene, parent: Phaser.GameObjects.Container): Phaser.GameObjects.Text {
+  const pooled = damageNumberPool.pop();
+  if (pooled) return pooled;
+  const t = scene.add
+    .text(0, 0, "", {
+      fontFamily: "georgia, serif",
+      fontSize: "20px",
+      color: "#ffe08a",
+      fontStyle: "bold",
+      stroke: "#241a05",
+      strokeThickness: 4,
+    })
+    .setOrigin(0.5);
+  parent.add(t);
+  return t;
+}
+
+function releaseDamageNumber(t: Phaser.GameObjects.Text): void {
+  t.setVisible(false);
+  damageNumberPool.push(t);
+}
+
 /** Shared body for both the human player and bots: movement, health, and the sword/bow combat state machine. */
 export class Character {
   readonly team: TeamId;
@@ -210,29 +235,22 @@ export class Character {
     });
   }
 
-  /** FF-style floating damage number rising above the head. */
+  /** FF-style floating damage number rising above the head. Pooled — see acquireDamageNumber above. */
   private spawnDamageNumber(amount: number): void {
     const parent = this.container.parentContainer;
     if (!parent) return;
-    const t = this.scene.add
-      .text(this.x + (Math.random() - 0.5) * 16, this.y - this.radius - 14, `${amount}`, {
-        fontFamily: "georgia, serif",
-        fontSize: "20px",
-        color: "#ffe08a",
-        fontStyle: "bold",
-        stroke: "#241a05",
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5);
-    parent.add(t);
+    const startX = this.x + (Math.random() - 0.5) * 16;
+    const startY = this.y - this.radius - 14;
+    const t = acquireDamageNumber(this.scene, parent);
+    t.setText(`${amount}`).setPosition(startX, startY).setScale(1).setAlpha(1).setVisible(true);
     this.scene.tweens.add({
       targets: t,
-      y: t.y - 34,
+      y: startY - 34,
       alpha: { from: 1, to: 0 },
       scale: { from: 1.15, to: 0.9 },
       duration: 700,
       ease: "Cubic.easeOut",
-      onComplete: () => t.destroy(),
+      onComplete: () => releaseDamageNumber(t),
     });
   }
 
