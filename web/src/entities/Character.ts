@@ -58,6 +58,9 @@ export class Character {
   private bowReadyAt = 0;
   private katanaReadyAt = 0;
   private pistolReadyAt = 0;
+  /** How long (ms) this bot has wanted to move but barely displaced — drives the wall-slide nudge below. */
+  private wallStuckMs = 0;
+  private wallSlideSign = 1;
 
   private scene: Phaser.Scene;
   private map: LabMap;
@@ -332,6 +335,8 @@ export class Character {
 
     const nextX = this.x + vx * dtSeconds;
     const nextY = this.y + vy * dtSeconds;
+    const startX = this.x;
+    const startY = this.y;
 
     // Try full diagonal movement first, then fall back to axis-aligned sliding
     if (this.map.isFree(nextX, nextY, this.radius)) {
@@ -341,6 +346,42 @@ export class Character {
       // Try X and Y separately to slide along walls smoothly
       if (this.map.isFree(nextX, this.y, this.radius)) this.x = nextX;
       if (this.map.isFree(this.x, nextY, this.radius)) this.y = nextY;
+    }
+
+    // Bots only: if we've wanted to move for a while but barely displaced (wedged in a
+    // corner/wall), nudge sideways — perpendicular to the intended direction — instead of
+    // freezing. Cheap (no room scans/pathfinding): just a per-character counter + a couple
+    // of extra isFree checks, only once the bot has been stuck for a bit.
+    if (!this.isHuman) {
+      const wantsToMove = Math.abs(this.moveDirX) + Math.abs(this.moveDirY) > 0.01;
+      const displaced = Math.hypot(this.x - startX, this.y - startY) > 0.5;
+      if (wantsToMove && !displaced) {
+        this.wallStuckMs += dtSeconds * 1000;
+      } else {
+        this.wallStuckMs = 0;
+      }
+
+      if (this.wallStuckMs > 150) {
+        const dirLen = Math.hypot(this.moveDirX, this.moveDirY) || 1;
+        const perpX = -(this.moveDirY / dirLen);
+        const perpY = this.moveDirX / dirLen;
+        const nudge = GAME_CONFIG.MOVE_SPEED * 0.6 * dtSeconds;
+
+        const tryX = this.x + perpX * this.wallSlideSign * nudge;
+        const tryY = this.y + perpY * this.wallSlideSign * nudge;
+        if (this.map.isFree(tryX, tryY, this.radius)) {
+          this.x = tryX;
+          this.y = tryY;
+        } else {
+          const altX = this.x - perpX * this.wallSlideSign * nudge;
+          const altY = this.y - perpY * this.wallSlideSign * nudge;
+          if (this.map.isFree(altX, altY, this.radius)) {
+            this.x = altX;
+            this.y = altY;
+            this.wallSlideSign *= -1;
+          }
+        }
+      }
     }
 
     this.container.setPosition(this.x, this.y);
